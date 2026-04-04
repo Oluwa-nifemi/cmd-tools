@@ -65,6 +65,12 @@ Or stack them onto a specific branch:
 gs track feat/logging --onto feat/api
 ```
 
+To quickly add a single branch on top of wherever you are:
+
+```bash
+gs stack feat/logging    # stacks it on your current branch
+```
+
 ## Commands
 
 ### Setup
@@ -98,6 +104,7 @@ gs track feat/logging --onto feat/api
 | Command | Description |
 |---------|-------------|
 | `gs track <b1> [b2] ... [--onto <branch>]` | Retroactively track existing branches as a stack |
+| `gs stack <branch>` | Add a branch on top of the current one |
 | `gs restack [--all \| --continue]` | Manually rebase upstack (use after raw git commands) |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
 | `gs untrack [branch]` | Remove from gs tracking, keep git branch |

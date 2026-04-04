@@ -256,6 +256,19 @@ cmd_track() {
   success "tracked ${#branches[@]} branch(es)"
 }
 
+# Add an existing branch on top of the current one. No flags needed.
+cmd_stack() {
+  ensure_gs_init
+  local branch="${1:-}"
+  [[ -z "$branch" ]] && die "usage: gs stack <branch>"
+  branch_exists "$branch" || die "branch '$branch' does not exist"
+
+  local cur
+  cur="$(current_branch)"
+  set_parent "$branch" "$cur"
+  success "stacked '$branch' onto '$cur'"
+}
+
 # Commit to the current branch, then auto-rebase all upstack branches.
 # This is the key difference from Graphite: we add commits, not amend them.
 # All flags are passed through to git commit.
@@ -802,6 +815,7 @@ Commands:
   init                    Initialize gs in current repo
   create <name> [-m msg]  Create a new stacked branch
   track <b1> [b2] ...     Track existing branches as a stack
+  stack <branch>          Add a branch on top of the current one
   commit [-a] [-m msg]    Commit and auto-restack upstack
   restack [--all]         Rebase upstack branches (or entire stack)
   ls / list               Show the stack tree
@@ -831,6 +845,7 @@ main() {
     init)     cmd_init "$@" ;;
     create)   cmd_create "$@" ;;
     track)    cmd_track "$@" ;;
+    stack)    cmd_stack "$@" ;;
     commit)   cmd_commit "$@" ;;
     restack)  cmd_restack "$@" ;;
     ls|list)  cmd_ls "$@" ;;
