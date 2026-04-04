@@ -1,0 +1,103 @@
+# wt — git worktree manager
+#
+# Creates worktrees in a configured base directory, copies over .env files
+# and CLAUDE.local.md, then cds in the new worktree.
+#
+# Run `wt --install <path>` once to set your worktrees directory.
+# The path is written directly into this file so there's nothing else to configure.
+
+# ── SETTINGS (modified by wt --install) ────────────────────────────────────
+WT_WORKTREES_DIR="__NOT_CONFIGURED__"
+# ── END SETTINGS ───────────────────────────────────────────────────────────
+
+# Capture path to this file at source time (not inside the function)
+WT_SELF_FILE="${(%):-%x}"
+
+wt() {
+  local self_file="$WT_SELF_FILE"
+
+  if [[ -z "$1" ]]; then
+    echo "wt — git worktree manager"
+    echo ""
+    echo "Usage: wt <name> [base-branch]   Create a worktree and open Claude"
+    echo "       wt --list                  List all worktrees"
+    echo "       wt --clean [--force]       Remove current worktree and its branch"
+    echo "       wt --install <path>        Set the base directory for worktrees"
+    if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
+      echo ""
+      echo "⚠ Not configured yet. Run: wt --install <path>"
+    else
+      echo ""
+      echo "Worktrees dir: $WT_WORKTREES_DIR"
+    fi
+    return 0
+  fi
+
+  if [[ "$1" == "--install" ]]; then
+    local new_path="${2:-}"
+    [[ -z "$new_path" ]] && echo "Usage: wt --install <path>" && return 1
+
+    # Expand to absolute path
+    new_path="${new_path:A}"
+    mkdir -p "$new_path" || { echo "Failed to create directory: $new_path"; return 1; }
+
+    # Self-modify: replace the settings line in this file
+    sed -i '' "s|^WT_WORKTREES_DIR=.*|WT_WORKTREES_DIR=\"$new_path\"|" "$self_file"
+    WT_WORKTREES_DIR="$new_path"
+
+    echo "Worktrees directory set to: $new_path"
+    echo "This setting is saved in: $self_file"
+    return 0
+  fi
+
+  if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
+    echo "wt is not configured yet. Run: wt --install <path>"
+    return 1
+  fi
+
+  local repo_name="$(basename $(git rev-parse --show-toplevel))"
+  local worktrees_dir="$WT_WORKTREES_DIR/$repo_name"
+
+  if [[ "$1" == "--list" ]]; then
+    git worktree list
+    return 0
+  fi
+
+  if [[ "$1" == "--clean" ]]; then
+    local force=0
+    [[ "$2" == "--force" ]] && force=1
+
+    local worktree_path="$(pwd)"
+    local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+    # Ensure we're actually inside a worktree (not the main repo)
+    local main_repo="$(git worktree list --porcelain | awk '/^worktree / { if (NR==1) print $2 }')"
+    if [[ "$worktree_path" == "$main_repo" ]]; then
+      echo "wt --clean: you're in the main worktree, not a linked one. Aborting."
+      return 1
+    fi
+
+    if [[ $force -eq 0 ]]; then
+      local uncommitted="$(git status --porcelain)"
+      if [[ -n "$uncommitted" ]]; then
+        echo "Uncommitted changes in $worktree_path:"
+        git status --short
+        echo "\nRun 'wt --clean --force' to delete anyway."
+        return 1
+      fi
+    fi
+
+    cd "$main_repo"
+    git worktree remove "$worktree_path" --force
+    git branch -D "$branch"
+    echo "Cleaned up worktree '$branch'."
+    return 0
+  fi
+
+  local name="$1"
+  local base="${2:-$(git rev-parse --abbrev-ref HEAD)}"
+  local root="$(git rev-parse --show-toplevel)"
+  git worktree add "$worktrees_dir/$name" -b "$name" "$base" && cd "$worktrees_dir/$name" || return 1
+  [[ -f "$root/CLAUDE.local.md" ]] && cp "$root/CLAUDE.local.md" .
+  for env in "$root"/.env*; do [[ -f "$env" ]] && cp "$env" .; done
+}
