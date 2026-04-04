@@ -289,6 +289,7 @@ cmd_commit() {
 
   info "restacking upstack branches..."
   restack_upstack "$(current_branch)"
+  cleanup_restack_tips
   success "commit done and upstack restacked"
 }
 
@@ -316,11 +317,18 @@ cmd_restack() {
   else
     restack_upstack "$(current_branch)"
   fi
+  cleanup_restack_tips
   success "restack complete"
 }
 
 # Core restack engine: recursively rebase each child onto its parent, depth-first.
 # On conflict, saves state to .git/gs/restack_state for --continue to resume.
+#
+# The tricky part: after rebasing child A onto parent P, A has new commit hashes.
+# If A has its own children, they still reference A's OLD commits. So we can't
+# use merge-base to find the fork point — it'll go too far back.
+# Instead, we save each branch's old tip BEFORE rebasing, and use that as the
+# fork point for its children. This is stored in .git/gs/old_tips/<branch>.
 restack_upstack() {
   local base="$1"
   local children
@@ -329,11 +337,42 @@ restack_upstack() {
   local original_branch
   original_branch="$(current_branch)"
 
+  local tips_dir
+  tips_dir="$(gs_dir)/old_tips"
+  mkdir -p "$tips_dir"
+
   for child in $children; do
     branch_exists "$child" || continue
+
+    # Determine the fork point: if we previously rebased the parent and saved
+    # its old tip, use that. Otherwise fall back to merge-base.
+    local fork_point=""
+    local old_tip_file="$tips_dir/$(encode_branch "$base")"
+    if [[ -f "$old_tip_file" ]]; then
+      # Parent was rebased — child is still based on parent's old commits.
+      # The old tip of the parent is the correct fork point.
+      fork_point="$(cat "$old_tip_file")"
+    else
+      fork_point="$(git merge-base "$base" "$child" 2>/dev/null)" || fork_point="$base"
+    fi
+
+    # Skip if child is already up to date
+    local child_tip
+    child_tip="$(git rev-parse "$child" 2>/dev/null)"
+    local base_tip
+    base_tip="$(git rev-parse "$base" 2>/dev/null)"
+    if [[ "$fork_point" == "$base_tip" ]] || [[ "$child_tip" == "$base_tip" ]]; then
+      info "'$child' is already up to date with '$base'"
+      restack_upstack "$child"
+      continue
+    fi
+
+    # Save child's current tip before rebasing (its children will need this)
+    echo "$child_tip" > "$tips_dir/$(encode_branch "$child")"
+
     info "rebasing '$child' onto '$base'..."
 
-    if ! git rebase "$base" "$child" --quiet 2>/dev/null; then
+    if ! git rebase --onto "$base" "$fork_point" "$child" --quiet 2>/dev/null; then
       # Conflict detected — save state for --continue
       local state_file
       state_file="$(gs_dir)/restack_state"
@@ -355,6 +394,11 @@ restack_upstack() {
   if [[ "$(current_branch)" != "$original_branch" ]] && branch_exists "$original_branch"; then
     git checkout "$original_branch" --quiet 2>/dev/null || true
   fi
+}
+
+# Clean up old_tips after a full restack completes
+cleanup_restack_tips() {
+  rm -rf "$(gs_dir)/old_tips"
 }
 
 restack_continue() {
@@ -382,6 +426,7 @@ restack_continue() {
     git checkout "$original" --quiet 2>/dev/null || true
   fi
 
+  cleanup_restack_tips
   success "restack continued and completed"
 }
 
