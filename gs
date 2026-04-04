@@ -1,0 +1,779 @@
+#!/usr/bin/env bash
+
+# gs (git-stack) — stacked branch workflow tool
+# A single-file CLI for managing stacked branches with multi-commit support.
+
+set -eo pipefail
+
+# ── Colors ──────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+die() {
+  printf "${RED}error:${RESET} %s\n" "$*" >&2
+  exit 1
+}
+
+info() {
+  printf "${CYAN}%s${RESET}\n" "$*"
+}
+
+warn() {
+  printf "${YELLOW}warning:${RESET} %s\n" "$*" >&2
+}
+
+success() {
+  printf "${GREEN}%s${RESET}\n" "$*"
+}
+
+ensure_git_repo() {
+  git rev-parse --git-dir &>/dev/null || die "not a git repository"
+}
+
+git_dir() {
+  git rev-parse --git-dir
+}
+
+gs_dir() {
+  echo "$(git_dir)/gs"
+}
+
+ensure_gs_init() {
+  ensure_git_repo
+  local d
+  d="$(gs_dir)"
+  [[ -d "$d" ]] || die "gs is not initialized in this repo. Run 'gs init' first."
+}
+
+current_branch() {
+  git symbolic-ref --short HEAD 2>/dev/null || die "HEAD is detached"
+}
+
+trunk_branch() {
+  cat "$(gs_dir)/config" 2>/dev/null || die "cannot read trunk config"
+}
+
+branch_exists() {
+  git show-ref --verify --quiet "refs/heads/$1" 2>/dev/null
+}
+
+# Encode branch name for safe filesystem use (/ -> %2F)
+encode_branch() {
+  echo "$1" | sed 's/%/%25/g; s|/|%2F|g'
+}
+
+# Decode branch name from filesystem (%2F -> /)
+decode_branch() {
+  echo "$1" | sed 's|%2F|/|g; s/%25/%/g'
+}
+
+is_tracked() {
+  [[ -f "$(gs_dir)/branches/$(encode_branch "$1")" ]]
+}
+
+get_parent() {
+  local f
+  f="$(gs_dir)/branches/$(encode_branch "$1")"
+  [[ -f "$f" ]] && cat "$f" || return 1
+}
+
+set_parent() {
+  # $1 = branch, $2 = parent
+  echo "$2" > "$(gs_dir)/branches/$(encode_branch "$1")"
+}
+
+remove_tracking() {
+  rm -f "$(gs_dir)/branches/$(encode_branch "$1")"
+}
+
+# Return all tracked children of a branch
+get_children() {
+  local parent="$1"
+  local dir
+  dir="$(gs_dir)/branches"
+  [[ -d "$dir" ]] || return 0
+  for f in "$dir"/*; do
+    [[ -f "$f" ]] || continue
+    local encoded_child
+    encoded_child="$(basename "$f")"
+    local child
+    child="$(decode_branch "$encoded_child")"
+    if [[ "$(cat "$f")" == "$parent" ]]; then
+      echo "$child"
+    fi
+  done
+}
+
+# Count commits on a branch relative to its parent
+count_commits() {
+  local branch="$1"
+  local parent
+  parent="$(get_parent "$branch" 2>/dev/null)" || return 0
+  git rev-list --count "$parent".."$branch" 2>/dev/null || echo 0
+}
+
+# ── Commands ────────────────────────────────────────────────────────────────
+
+cmd_init() {
+  ensure_git_repo
+  local d
+  d="$(gs_dir)"
+
+  if [[ -d "$d" ]]; then
+    warn "gs is already initialized in this repo"
+    info "trunk: $(trunk_branch)"
+    return 0
+  fi
+
+  local trunk=""
+  # Check for explicit argument
+  if [[ ${1:-} == "--trunk" ]] && [[ -n ${2:-} ]]; then
+    trunk="$2"
+  else
+    # Auto-detect
+    for candidate in main master; do
+      if branch_exists "$candidate"; then
+        trunk="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$trunk" ]]; then
+    die "could not detect trunk branch. Use: gs init --trunk <branch>"
+  fi
+
+  mkdir -p "$d/branches"
+  echo "$trunk" > "$d/config"
+  success "initialized gs with trunk branch '$trunk'"
+}
+
+cmd_create() {
+  ensure_gs_init
+  local name=""
+  local message=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m) shift; message="${1:-}"; [[ -z "$message" ]] && die "-m requires a message" ;;
+      -*) die "unknown flag: $1" ;;
+      *)  name="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -z "$name" ]] && die "usage: gs create <name> [-m \"message\"]"
+  branch_exists "$name" && die "branch '$name' already exists"
+
+  local parent
+  parent="$(current_branch)"
+
+  git checkout -b "$name" --quiet
+  set_parent "$name" "$parent"
+
+  # Also track parent if it's not trunk and not yet tracked
+  local trunk
+  trunk="$(trunk_branch)"
+  if [[ "$parent" != "$trunk" ]] && ! is_tracked "$parent"; then
+    set_parent "$parent" "$trunk"
+    info "auto-tracked parent '$parent' onto '$trunk'"
+  fi
+
+  if [[ -n "$message" ]]; then
+    git commit -m "$message" --allow-empty --quiet 2>/dev/null || git commit -m "$message" --quiet
+  fi
+
+  success "created branch '$name' stacked on '$parent'"
+}
+
+cmd_track() {
+  ensure_gs_init
+  local onto=""
+  local branches=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --onto) shift; onto="${1:-}"; [[ -z "$onto" ]] && die "--onto requires a branch name" ;;
+      -*) die "unknown flag: $1" ;;
+      *)  branches+=("$1") ;;
+    esac
+    shift
+  done
+
+  [[ ${#branches[@]} -eq 0 ]] && die "usage: gs track <branch1> [branch2] ... [--onto <branch>]"
+
+  local trunk
+  trunk="$(trunk_branch)"
+  local parent="${onto:-$trunk}"
+
+  # Validate parent
+  if [[ "$parent" != "$trunk" ]] && ! branch_exists "$parent"; then
+    die "branch '$parent' does not exist"
+  fi
+
+  for b in "${branches[@]}"; do
+    branch_exists "$b" || die "branch '$b' does not exist"
+    set_parent "$b" "$parent"
+    info "tracked '$b' onto '$parent'"
+    parent="$b"
+  done
+
+  success "tracked ${#branches[@]} branch(es)"
+}
+
+cmd_commit() {
+  ensure_gs_init
+  local args=()
+  local has_message=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m) has_message=true; args+=("$1"); shift; args+=("${1:-}") ;;
+      *)  args+=("$1") ;;
+    esac
+    shift
+  done
+
+  git commit "${args[@]}"
+
+  info "restacking upstack branches..."
+  restack_upstack "$(current_branch)"
+  success "commit done and upstack restacked"
+}
+
+cmd_restack() {
+  ensure_gs_init
+  local mode="upstack"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --upstack) mode="upstack" ;;
+      --all)     mode="all" ;;
+      --continue) restack_continue; return ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
+
+  if [[ "$mode" == "all" ]]; then
+    local trunk
+    trunk="$(trunk_branch)"
+    restack_upstack "$trunk"
+  else
+    restack_upstack "$(current_branch)"
+  fi
+  success "restack complete"
+}
+
+restack_upstack() {
+  local base="$1"
+  local children
+  children="$(get_children "$base")"
+
+  local original_branch
+  original_branch="$(current_branch)"
+
+  for child in $children; do
+    branch_exists "$child" || continue
+    info "rebasing '$child' onto '$base'..."
+
+    if ! git rebase "$base" "$child" --quiet 2>/dev/null; then
+      # Conflict detected — save state for --continue
+      local state_file
+      state_file="$(gs_dir)/restack_state"
+      {
+        echo "child=$child"
+        echo "base=$base"
+        echo "original=$original_branch"
+      } > "$state_file"
+      printf "\n${RED}conflict detected${RESET} while rebasing '${YELLOW}$child${RESET}' onto '${YELLOW}$base${RESET}'\n"
+      echo "Resolve conflicts, stage files, then run: gs restack --continue"
+      exit 1
+    fi
+
+    # Recurse into children of child
+    restack_upstack "$child"
+  done
+
+  # Return to original branch if we're still on it
+  if [[ "$(current_branch)" != "$original_branch" ]] && branch_exists "$original_branch"; then
+    git checkout "$original_branch" --quiet 2>/dev/null || true
+  fi
+}
+
+restack_continue() {
+  local state_file
+  state_file="$(gs_dir)/restack_state"
+  [[ -f "$state_file" ]] || die "no restack in progress"
+
+  # Source the state
+  local child base original
+  eval "$(cat "$state_file")"
+
+  # Continue the rebase
+  if ! git rebase --continue; then
+    echo "Still have conflicts. Resolve them and run 'gs restack --continue' again."
+    exit 1
+  fi
+
+  rm -f "$state_file"
+
+  # Continue restacking children of the child we just rebased
+  restack_upstack "$child"
+
+  # Return to original branch
+  if branch_exists "$original"; then
+    git checkout "$original" --quiet 2>/dev/null || true
+  fi
+
+  success "restack continued and completed"
+}
+
+cmd_ls() {
+  ensure_gs_init
+  local trunk
+  trunk="$(trunk_branch)"
+  local cur
+  cur="$(current_branch)"
+
+  echo -e "${BOLD}${YELLOW}$trunk${RESET}"
+  print_tree "$trunk" "" "$cur"
+}
+
+# Recursive tree printer
+# $1 = parent branch, $2 = prefix for indentation, $3 = current branch
+print_tree() {
+  local parent="$1"
+  local prefix="$2"
+  local cur="$3"
+
+  local children=()
+  while IFS= read -r c; do
+    [[ -n "$c" ]] && children+=("$c")
+  done <<< "$(get_children "$parent")"
+
+  local count=${#children[@]}
+  local i=0
+
+  for child in "${children[@]}"; do
+    i=$((i + 1))
+    local connector="├── "
+    local child_prefix="${prefix}│   "
+    if [[ $i -eq $count ]]; then
+      connector="└── "
+      child_prefix="${prefix}    "
+    fi
+
+    local commits
+    commits="$(count_commits "$child")"
+    local marker=""
+    if [[ "$child" == "$cur" ]]; then
+      marker=" ${GREEN}← you are here${RESET}"
+    fi
+
+    local color="${YELLOW}"
+    if [[ "$child" == "$cur" ]]; then
+      color="${GREEN}${BOLD}"
+    fi
+
+    echo -e "${prefix}${connector}${color}${child}${RESET} ${DIM}(${commits} commit$([ "$commits" != "1" ] && echo "s"))${RESET}${marker}"
+    print_tree "$child" "$child_prefix" "$cur"
+  done
+}
+
+cmd_log() {
+  ensure_gs_init
+  local trunk
+  trunk="$(trunk_branch)"
+  local cur
+  cur="$(current_branch)"
+
+  echo -e "${BOLD}${YELLOW}$trunk${RESET}"
+  print_log_tree "$trunk" "" "$cur"
+}
+
+print_log_tree() {
+  local parent="$1"
+  local prefix="$2"
+  local cur="$3"
+
+  local children=()
+  while IFS= read -r c; do
+    [[ -n "$c" ]] && children+=("$c")
+  done <<< "$(get_children "$parent")"
+
+  local count=${#children[@]}
+  local i=0
+
+  for child in "${children[@]}"; do
+    i=$((i + 1))
+    local connector="├── "
+    local child_prefix="${prefix}│   "
+    if [[ $i -eq $count ]]; then
+      connector="└── "
+      child_prefix="${prefix}    "
+    fi
+
+    local marker=""
+    if [[ "$child" == "$cur" ]]; then
+      marker=" ${GREEN}← you are here${RESET}"
+    fi
+
+    local color="${YELLOW}"
+    if [[ "$child" == "$cur" ]]; then
+      color="${GREEN}${BOLD}"
+    fi
+
+    echo -e "${prefix}${connector}${color}${child}${RESET}${marker}"
+
+    # Show commits on this branch
+    local parent_branch
+    parent_branch="$(get_parent "$child" 2>/dev/null)" || parent_branch="$parent"
+    local commits
+    commits="$(git log --oneline "$parent_branch".."$child" 2>/dev/null)" || commits=""
+    if [[ -n "$commits" ]]; then
+      while IFS= read -r line; do
+        local hash msg
+        hash="${line%% *}"
+        msg="${line#* }"
+        echo -e "${child_prefix}${DIM}${BLUE}$hash${RESET} ${DIM}$msg${RESET}"
+      done <<< "$commits"
+    fi
+
+    print_log_tree "$child" "$child_prefix" "$cur"
+  done
+}
+
+cmd_up() {
+  ensure_gs_init
+  local steps="${1:-1}"
+  local cur
+  cur="$(current_branch)"
+
+  for ((s = 0; s < steps; s++)); do
+    local children=()
+    while IFS= read -r c; do
+      [[ -n "$c" ]] && children+=("$c")
+    done <<< "$(get_children "$cur")"
+
+    if [[ ${#children[@]} -eq 0 ]]; then
+      die "no child branches above '$(current_branch)'"
+    elif [[ ${#children[@]} -eq 1 ]]; then
+      cur="${children[0]}"
+    else
+      echo "Multiple children of '$(current_branch)':"
+      local idx=1
+      for c in "${children[@]}"; do
+        echo "  $idx) $c"
+        idx=$((idx + 1))
+      done
+      printf "Pick [1-%d]: " "${#children[@]}"
+      read -r choice
+      choice=$((choice - 1))
+      if [[ $choice -lt 0 ]] || [[ $choice -ge ${#children[@]} ]]; then
+        die "invalid choice"
+      fi
+      cur="${children[$choice]}"
+    fi
+  done
+
+  git checkout "$cur" --quiet
+  success "switched to '$cur'"
+}
+
+cmd_down() {
+  ensure_gs_init
+  local steps="${1:-1}"
+  local cur
+  cur="$(current_branch)"
+
+  for ((s = 0; s < steps; s++)); do
+    local parent
+    parent="$(get_parent "$cur" 2>/dev/null)" || die "'$cur' has no tracked parent"
+    cur="$parent"
+  done
+
+  git checkout "$cur" --quiet
+  success "switched to '$cur'"
+}
+
+cmd_top() {
+  ensure_gs_init
+  local cur
+  cur="$(current_branch)"
+
+  while true; do
+    local children=()
+    while IFS= read -r c; do
+      [[ -n "$c" ]] && children+=("$c")
+    done <<< "$(get_children "$cur")"
+
+    if [[ ${#children[@]} -eq 0 ]]; then
+      break
+    elif [[ ${#children[@]} -eq 1 ]]; then
+      cur="${children[0]}"
+    else
+      # Multiple children — pick the first one (follow the leftmost path)
+      echo "Multiple children at '$cur', following first: ${children[0]}"
+      cur="${children[0]}"
+    fi
+  done
+
+  git checkout "$cur" --quiet
+  success "switched to '$cur' (top of stack)"
+}
+
+cmd_bottom() {
+  ensure_gs_init
+  local cur
+  cur="$(current_branch)"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  while true; do
+    local parent
+    parent="$(get_parent "$cur" 2>/dev/null)" || break
+    if [[ "$parent" == "$trunk" ]]; then
+      break
+    fi
+    cur="$parent"
+  done
+
+  if [[ "$cur" == "$(current_branch)" ]] && [[ "$(get_parent "$cur" 2>/dev/null)" != "$trunk" ]]; then
+    die "current branch is not part of a tracked stack"
+  fi
+
+  git checkout "$cur" --quiet
+  success "switched to '$cur' (bottom of stack)"
+}
+
+cmd_move() {
+  ensure_gs_init
+  local target=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --onto) shift; target="${1:-}"; [[ -z "$target" ]] && die "--onto requires a branch" ;;
+      *) die "usage: gs move --onto <target>" ;;
+    esac
+    shift
+  done
+
+  [[ -z "$target" ]] && die "usage: gs move --onto <target>"
+  branch_exists "$target" || die "branch '$target' does not exist"
+
+  local cur
+  cur="$(current_branch)"
+  is_tracked "$cur" || die "'$cur' is not tracked by gs"
+
+  local old_parent
+  old_parent="$(get_parent "$cur")"
+
+  # Rebase current branch onto target
+  info "rebasing '$cur' onto '$target'..."
+  git rebase --onto "$target" "$old_parent" "$cur" --quiet || {
+    die "rebase failed — resolve conflicts, then update metadata manually"
+  }
+
+  # Update metadata
+  set_parent "$cur" "$target"
+
+  # Restack upstack
+  info "restacking upstack branches..."
+  restack_upstack "$cur"
+
+  success "moved '$cur' onto '$target'"
+}
+
+cmd_untrack() {
+  ensure_gs_init
+  local branch="${1:-$(current_branch)}"
+
+  is_tracked "$branch" || die "'$branch' is not tracked by gs"
+
+  local parent
+  parent="$(get_parent "$branch")"
+
+  # Reparent children to this branch's parent
+  local children
+  children="$(get_children "$branch")"
+  for child in $children; do
+    set_parent "$child" "$parent"
+    info "reparented '$child' to '$parent'"
+  done
+
+  remove_tracking "$branch"
+  success "untracked '$branch' (git branch still exists)"
+}
+
+cmd_fold() {
+  ensure_gs_init
+  local cur
+  cur="$(current_branch)"
+
+  is_tracked "$cur" || die "'$cur' is not tracked by gs"
+
+  local parent
+  parent="$(get_parent "$cur")"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  [[ "$parent" == "$trunk" ]] && [[ "$cur" == "$trunk" ]] && die "cannot fold trunk"
+
+  # Reparent children to the parent
+  local children
+  children="$(get_children "$cur")"
+  for child in $children; do
+    set_parent "$child" "$parent"
+    info "reparented '$child' to '$parent'"
+  done
+
+  # Switch to parent and merge current branch
+  git checkout "$parent" --quiet
+  info "merging '$cur' into '$parent'..."
+  git merge --squash "$cur" --quiet
+  git commit --no-edit --quiet 2>/dev/null || {
+    warn "staged merge changes — commit them manually on '$parent'"
+  }
+
+  # Delete the branch and its tracking
+  git branch -D "$cur" --quiet 2>/dev/null
+  remove_tracking "$cur"
+
+  # Restack children
+  restack_upstack "$parent"
+
+  success "folded '$cur' into '$parent'"
+}
+
+cmd_push() {
+  ensure_gs_init
+  local cur
+  cur="$(current_branch)"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  # Build the downstack path from current branch to trunk
+  local stack=()
+  local b="$cur"
+  while [[ "$b" != "$trunk" ]]; do
+    stack+=("$b")
+    local p
+    p="$(get_parent "$b" 2>/dev/null)" || break
+    b="$p"
+  done
+
+  # Push from bottom to top (reverse)
+  local len=${#stack[@]}
+  for ((i = len - 1; i >= 0; i--)); do
+    local branch="${stack[$i]}"
+    info "pushing '$branch'..."
+    git push -u origin "$branch" --force-with-lease 2>&1 | sed "s/^/  /"
+  done
+
+  success "pushed $len branch(es)"
+}
+
+cmd_delete() {
+  ensure_gs_init
+  local branch="${1:-$(current_branch)}"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  [[ "$branch" == "$trunk" ]] && die "cannot delete trunk branch"
+
+  local cur
+  cur="$(current_branch)"
+
+  if is_tracked "$branch"; then
+    local parent
+    parent="$(get_parent "$branch")"
+
+    # Reparent children
+    local children
+    children="$(get_children "$branch")"
+    for child in $children; do
+      set_parent "$child" "$parent"
+      info "reparented '$child' to '$parent'"
+    done
+
+    remove_tracking "$branch"
+
+    # If we're on the branch being deleted, move to parent
+    if [[ "$cur" == "$branch" ]]; then
+      git checkout "$parent" --quiet
+    fi
+  else
+    if [[ "$cur" == "$branch" ]]; then
+      git checkout "$trunk" --quiet
+    fi
+  fi
+
+  git branch -D "$branch" 2>/dev/null
+  success "deleted branch '$branch'"
+}
+
+cmd_help() {
+  cat <<'HELP'
+gs (git-stack) — stacked branch workflow
+
+Usage: gs <command> [options]
+
+Commands:
+  init                    Initialize gs in current repo
+  create <name> [-m msg]  Create a new stacked branch
+  track <b1> [b2] ...     Track existing branches as a stack
+  commit [-a] [-m msg]    Commit and auto-restack upstack
+  restack [--all]         Rebase upstack branches (or entire stack)
+  ls / list               Show the stack tree
+  log                     Show stack tree with commit messages
+  up [N]                  Move up to child branch
+  down [N]                Move down to parent branch
+  top                     Jump to topmost branch in stack
+  bottom                  Jump to bottommost branch (near trunk)
+  move --onto <branch>    Move current branch to a new parent
+  untrack [branch]        Remove branch from gs tracking
+  fold                    Merge current branch into its parent
+  push                    Push downstack branches to remote
+  delete [branch]         Delete branch from stack and git
+  help                    Show this help message
+HELP
+}
+
+# ── Main dispatch ───────────────────────────────────────────────────────────
+
+main() {
+  local cmd="${1:-help}"
+  shift 2>/dev/null || true
+
+  case "$cmd" in
+    init)     cmd_init "$@" ;;
+    create)   cmd_create "$@" ;;
+    track)    cmd_track "$@" ;;
+    commit)   cmd_commit "$@" ;;
+    restack)  cmd_restack "$@" ;;
+    ls|list)  cmd_ls "$@" ;;
+    log)      cmd_log "$@" ;;
+    up)       cmd_up "$@" ;;
+    down)     cmd_down "$@" ;;
+    top)      cmd_top "$@" ;;
+    bottom)   cmd_bottom "$@" ;;
+    move)     cmd_move "$@" ;;
+    untrack)  cmd_untrack "$@" ;;
+    fold)     cmd_fold "$@" ;;
+    push)     cmd_push "$@" ;;
+    delete)   cmd_delete "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *)        die "unknown command: $cmd. Run 'gs help' for usage." ;;
+  esac
+}
+
+main "$@"
