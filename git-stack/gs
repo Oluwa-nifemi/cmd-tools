@@ -787,6 +787,78 @@ cmd_push() {
   success "pushed $len branch(es)"
 }
 
+# Push downstack and create/update draft PRs for each branch.
+# Each PR targets its parent branch in the stack.
+cmd_push_pr() {
+  ensure_gs_init
+  local cur
+  cur="$(current_branch)"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  # Build the downstack path
+  local stack=()
+  local b="$cur"
+  while [[ "$b" != "$trunk" ]]; do
+    stack+=("$b")
+    local p
+    p="$(get_parent "$b" 2>/dev/null)" || break
+    b="$p"
+  done
+
+  # Push first
+  local len=${#stack[@]}
+  for ((i = len - 1; i >= 0; i--)); do
+    local branch="${stack[$i]}"
+    info "pushing '$branch'..."
+    git push -u origin "$branch" --force-with-lease 2>&1 | sed "s/^/  /"
+  done
+
+  success "pushed $len branch(es)"
+  echo ""
+
+  _create_stack_prs "${stack[@]}"
+}
+
+# Helper: create/update draft PRs for a list of branches (bottom-up order expected).
+_create_stack_prs() {
+  local branches=("$@")
+  local len=${#branches[@]}
+
+  for ((i = len - 1; i >= 0; i--)); do
+    local branch="${branches[$i]}"
+    local parent
+    parent="$(get_parent "$branch" 2>/dev/null)" || continue
+
+    # Check if PR already exists
+    local existing_url
+    existing_url="$(gh pr view "$branch" --json url --jq '.url' 2>/dev/null)" || existing_url=""
+
+    if [[ -n "$existing_url" ]]; then
+      info "PR exists for '$branch': $existing_url"
+      # Update the base branch in case it changed
+      gh pr edit "$branch" --base "$parent" 2>/dev/null || true
+    else
+      # Generate title from branch name: slashes/hyphens -> spaces, title case
+      local title
+      title="$(echo "$branch" | sed 's|[-/]| |g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')"
+
+      info "creating draft PR for '$branch' -> '$parent'..."
+      local pr_url
+      pr_url="$(gh pr create \
+        --head "$branch" \
+        --base "$parent" \
+        --title "$title" \
+        --body "Part of a stack. Created by gs." \
+        --draft 2>&1)" || {
+        warn "failed to create PR for '$branch'"
+        continue
+      }
+      success "  $pr_url"
+    fi
+  done
+}
+
 # Delete a branch from both git and gs tracking. Reparents children to parent.
 cmd_delete() {
   ensure_gs_init
@@ -879,6 +951,7 @@ Commands:
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
   push                    Push downstack branches to remote
+  push-pr                 Push downstack and create/update draft PRs
   pr                      Open the PR for current branch in browser
   checkout / co            Passthrough to git checkout
   diff [branch]           Diff against parent branch (or specified branch)
@@ -910,6 +983,7 @@ main() {
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
     push)     cmd_push "$@" ;;
+    push-pr)  cmd_push_pr "$@" ;;
     pr)       cmd_pr "$@" ;;
     checkout|co) cmd_checkout "$@" ;;
     diff)     cmd_diff "$@" ;;

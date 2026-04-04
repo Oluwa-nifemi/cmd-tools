@@ -111,6 +111,8 @@ gs stack feat/logging    # stacks it on your current branch
 | `gs fold` | Squash-merge current branch into its parent |
 | `gs delete [branch]` | Delete branch from stack and git |
 | `gs push` | Push from current branch downward through stack to remote |
+| `gs push-pr` | Push downstack and create/update draft PRs (each targets its parent branch) |
+| `gs pr` | Open the PR for current branch in browser |
 
 ## When to use `gs restack`
 
