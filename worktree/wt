@@ -22,6 +22,7 @@ wt() {
     echo "Usage: wt <name> [base-branch]   Create a worktree and open Claude"
     echo "       wt --list                  List all worktrees"
     echo "       wt --clean [--force]       Remove current worktree and its branch"
+    echo "       wt --push [remote-branch]   Push to remote (defaults to same branch name)"
     echo "       wt --install <path>        Set the base directory for worktrees"
     if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
       echo ""
@@ -48,6 +49,13 @@ wt() {
     echo "Worktrees directory set to: $new_path"
     echo "This setting is saved in: $self_file"
     return 0
+  fi
+
+  if [[ "$1" == "--push" ]]; then
+    local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    local remote_branch="${2:-$branch}"
+    git push -u origin "$branch:$remote_branch" --force-with-lease
+    return $?
   fi
 
   if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
