@@ -786,6 +786,12 @@ cmd_diff() {
   git diff "$target"...HEAD
 }
 
+# Passthrough to git checkout. Keeps gs as a single entry point for branch work.
+cmd_checkout() {
+  ensure_git_repo
+  git checkout "$@"
+}
+
 cmd_help() {
   cat <<'HELP'
 gs (git-stack) — stacked branch workflow
@@ -808,6 +814,7 @@ Commands:
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
   push                    Push downstack branches to remote
+  checkout / co            Passthrough to git checkout
   diff [branch]           Diff against parent branch (or specified branch)
   delete [branch]         Delete branch from stack and git
   help                    Show this help message
@@ -836,6 +843,7 @@ main() {
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
     push)     cmd_push "$@" ;;
+    checkout|co) cmd_checkout "$@" ;;
     diff)     cmd_diff "$@" ;;
     delete)   cmd_delete "$@" ;;
     help|-h|--help) cmd_help ;;
