@@ -769,6 +769,23 @@ cmd_delete() {
   success "deleted branch '$branch'"
 }
 
+# Diff current branch against its parent (default) or a specified branch.
+cmd_diff() {
+  ensure_gs_init
+  local target=""
+
+  if [[ -n "${1:-}" ]]; then
+    target="$1"
+    branch_exists "$target" || die "branch '$target' does not exist"
+  else
+    local cur
+    cur="$(current_branch)"
+    target="$(get_parent "$cur" 2>/dev/null)" || die "'$cur' has no tracked parent — pass a branch name explicitly"
+  fi
+
+  git diff "$target"...HEAD
+}
+
 cmd_help() {
   cat <<'HELP'
 gs (git-stack) — stacked branch workflow
@@ -791,6 +808,7 @@ Commands:
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
   push                    Push downstack branches to remote
+  diff [branch]           Diff against parent branch (or specified branch)
   delete [branch]         Delete branch from stack and git
   help                    Show this help message
 HELP
@@ -818,6 +836,7 @@ main() {
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
     push)     cmd_push "$@" ;;
+    diff)     cmd_diff "$@" ;;
     delete)   cmd_delete "$@" ;;
     help|-h|--help) cmd_help ;;
     *)        die "unknown command: $cmd. Run 'gs help' for usage." ;;
