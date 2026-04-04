@@ -1,7 +1,29 @@
 #!/usr/bin/env bash
 
 # gs (git-stack) — stacked branch workflow tool
-# A single-file CLI for managing stacked branches with multi-commit support.
+#
+# Inspired by Graphite (graphite.dev) which provides a stacked PR workflow.
+# Key difference: Graphite treats each branch as a single commit that gets
+# amended via `gt modify`. We don't like that — branches here can have
+# multiple commits, and `gs commit` simply adds a new commit then rebases
+# all upstack (child) branches to propagate the change.
+#
+# Metadata lives in .git/gs/ — a config file for trunk and a branches/
+# directory where each file maps a branch to its parent. That's it.
+# Branch names with slashes are URL-encoded (%2F) for safe filesystem use.
+#
+# Core workflow:
+#   gs init                 → set up tracking in a repo
+#   gs create <name>        → new branch stacked on current
+#   gs commit -m "msg"      → commit + auto-restack upstack branches
+#   gs track b1 b2 b3       → retroactively stack existing branches
+#   gs ls / gs log           → visualize the stack
+#   gs up / gs down          → navigate the stack
+#   gs restack               → manual rebase propagation (for when you
+#                              use raw git commands instead of gs commit)
+#
+# This file is meant to grow over time. Keep commands as functions (cmd_*)
+# and add new ones to the dispatch table in main() at the bottom.
 
 set -eo pipefail
 
@@ -122,6 +144,7 @@ count_commits() {
 
 # ── Commands ────────────────────────────────────────────────────────────────
 
+# Set up gs in a repo. Creates .git/gs/ dir and records which branch is trunk.
 cmd_init() {
   ensure_git_repo
   local d
@@ -156,6 +179,8 @@ cmd_init() {
   success "initialized gs with trunk branch '$trunk'"
 }
 
+# Create a new branch stacked on the current one. Optionally commit staged changes.
+# Auto-tracks the parent if it wasn't already tracked.
 cmd_create() {
   ensure_gs_init
   local name=""
@@ -194,6 +219,8 @@ cmd_create() {
   success "created branch '$name' stacked on '$parent'"
 }
 
+# Retroactively add existing branches to a stack. List them bottom-to-top.
+# First branch stacks onto trunk (or --onto target), each subsequent one stacks on the previous.
 cmd_track() {
   ensure_gs_init
   local onto=""
@@ -229,6 +256,9 @@ cmd_track() {
   success "tracked ${#branches[@]} branch(es)"
 }
 
+# Commit to the current branch, then auto-rebase all upstack branches.
+# This is the key difference from Graphite: we add commits, not amend them.
+# All flags are passed through to git commit.
 cmd_commit() {
   ensure_gs_init
   local args=()
@@ -249,6 +279,9 @@ cmd_commit() {
   success "commit done and upstack restacked"
 }
 
+# Manual rebase propagation. Use this when you've made changes with raw git
+# commands instead of gs commit. --all restacks the entire stack from trunk.
+# --continue resumes after resolving a rebase conflict.
 cmd_restack() {
   ensure_gs_init
   local mode="upstack"
@@ -273,6 +306,8 @@ cmd_restack() {
   success "restack complete"
 }
 
+# Core restack engine: recursively rebase each child onto its parent, depth-first.
+# On conflict, saves state to .git/gs/restack_state for --continue to resume.
 restack_upstack() {
   local base="$1"
   local children
@@ -337,6 +372,7 @@ restack_continue() {
   success "restack continued and completed"
 }
 
+# Show the stack as a tree with branch names and commit counts.
 cmd_ls() {
   ensure_gs_init
   local trunk
@@ -389,6 +425,7 @@ print_tree() {
   done
 }
 
+# Show the stack tree with individual commit hashes and messages per branch.
 cmd_log() {
   ensure_gs_init
   local trunk
@@ -452,6 +489,7 @@ print_log_tree() {
   done
 }
 
+# Navigate up (toward children). Prompts if multiple children exist.
 cmd_up() {
   ensure_gs_init
   local steps="${1:-1}"
@@ -489,6 +527,7 @@ cmd_up() {
   success "switched to '$cur'"
 }
 
+# Navigate down (toward parent/trunk).
 cmd_down() {
   ensure_gs_init
   local steps="${1:-1}"
@@ -505,6 +544,7 @@ cmd_down() {
   success "switched to '$cur'"
 }
 
+# Jump to the topmost branch in the current stack path. Follows first child if forked.
 cmd_top() {
   ensure_gs_init
   local cur
@@ -531,6 +571,7 @@ cmd_top() {
   success "switched to '$cur' (top of stack)"
 }
 
+# Jump to the bottommost branch (first branch above trunk).
 cmd_bottom() {
   ensure_gs_init
   local cur
@@ -555,6 +596,7 @@ cmd_bottom() {
   success "switched to '$cur' (bottom of stack)"
 }
 
+# Reparent the current branch onto a different target. Rebases and restacks upstack.
 cmd_move() {
   ensure_gs_init
   local target=""
@@ -593,6 +635,8 @@ cmd_move() {
   success "moved '$cur' onto '$target'"
 }
 
+# Remove a branch from gs tracking without deleting the git branch.
+# Children get reparented to this branch's parent.
 cmd_untrack() {
   ensure_gs_init
   local branch="${1:-$(current_branch)}"
@@ -614,6 +658,7 @@ cmd_untrack() {
   success "untracked '$branch' (git branch still exists)"
 }
 
+# Squash-merge current branch into its parent, delete it, reparent children, restack.
 cmd_fold() {
   ensure_gs_init
   local cur
@@ -654,6 +699,8 @@ cmd_fold() {
   success "folded '$cur' into '$parent'"
 }
 
+# Push from current branch down through the stack to trunk (force-with-lease).
+# Pushes bottom-up so remote branch dependencies are satisfied in order.
 cmd_push() {
   ensure_gs_init
   local cur
@@ -682,6 +729,7 @@ cmd_push() {
   success "pushed $len branch(es)"
 }
 
+# Delete a branch from both git and gs tracking. Reparents children to parent.
 cmd_delete() {
   ensure_gs_init
   local branch="${1:-$(current_branch)}"
