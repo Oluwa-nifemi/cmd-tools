@@ -86,29 +86,46 @@ wt() {
 
   if [[ "$1" == "--clean" ]]; then
     local force=0
-    [[ "$2" == "--force" ]] && force=1
+    local name=""
 
-    local worktree_path="$(pwd)"
-    local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    # Parse args: --force and optional name can appear in any order
+    for arg in "${@:2}"; do
+      if [[ "$arg" == "--force" ]]; then
+        force=1
+      else
+        name="$arg"
+      fi
+    done
 
-    # Ensure we're actually inside a worktree (not the main repo)
     local main_repo="$(git worktree list --porcelain | awk '/^worktree / { if (NR==1) print $2 }')"
-    if [[ "$worktree_path" == "$main_repo" ]]; then
-      echo "wt --clean: you're in the main worktree, not a linked one. Aborting."
-      return 1
-    fi
 
-    if [[ $force -eq 0 ]]; then
-      local uncommitted="$(git status --porcelain)"
-      if [[ -n "$uncommitted" ]]; then
-        echo "Uncommitted changes in $worktree_path:"
-        git status --short
-        echo "\nRun 'wt --clean --force' to delete anyway."
+    if [[ -n "$name" ]]; then
+      local worktree_path="$worktrees_dir/$name"
+      if [[ ! -d "$worktree_path" ]]; then
+        echo "wt --clean: no worktree found at $worktree_path"
+        return 1
+      fi
+      local branch="$name"
+    else
+      local worktree_path="$(pwd)"
+      local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      if [[ "$worktree_path" == "$main_repo" ]]; then
+        echo "wt --clean: you're in the main worktree, not a linked one. Aborting."
         return 1
       fi
     fi
 
-    cd "$main_repo"
+    if [[ $force -eq 0 ]]; then
+      local uncommitted="$(git -C "$worktree_path" status --porcelain)"
+      if [[ -n "$uncommitted" ]]; then
+        echo "Uncommitted changes in $worktree_path:"
+        git -C "$worktree_path" status --short
+        echo "\nRun 'wt --clean $name --force' to delete anyway."
+        return 1
+      fi
+    fi
+
+    [[ "$(pwd)" == "$worktree_path" ]] && cd "$main_repo"
     git worktree remove "$worktree_path" --force
     git branch -D "$branch"
     echo "Cleaned up worktree '$branch'."
