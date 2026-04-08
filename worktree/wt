@@ -21,7 +21,8 @@ wt() {
     echo ""
     echo "Usage: wt <name> [base-branch]   Create a worktree and open Claude"
     echo "       wt --list                  List all worktrees"
-    echo "       wt --clean [--force]       Remove current worktree and its branch"
+    echo "       wt --switch <name>         Switch to a worktree by branch name"
+    echo "       wt --clean [name] [--force] Remove a worktree and its branch (defaults to current)"
     echo "       wt --push [remote-branch]   Push to remote (defaults to same branch name)"
     echo "       wt --install <path>        Set the base directory for worktrees"
     if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
@@ -68,6 +69,18 @@ wt() {
 
   if [[ "$1" == "--list" ]]; then
     git worktree list
+    return 0
+  fi
+
+  if [[ "$1" == "--switch" ]]; then
+    local name="${2:-}"
+    [[ -z "$name" ]] && echo "Usage: wt --switch <name>" && return 1
+    local target="$worktrees_dir/$name"
+    if [[ ! -d "$target" ]]; then
+      echo "wt --switch: no worktree found at $target"
+      return 1
+    fi
+    cd "$target"
     return 0
   fi
 
