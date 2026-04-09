@@ -916,6 +916,39 @@ cmd_diff() {
   git diff "$target"...HEAD
 }
 
+# Rename the current branch (or a specified branch) to a new name.
+cmd_rename() {
+  ensure_gs_init
+  local new_name="${1:-}"
+  [[ -z "$new_name" ]] && die "usage: gs rename <new-name>"
+
+  local cur
+  cur="$(current_branch)"
+  local trunk
+  trunk="$(trunk_branch)"
+  [[ "$cur" == "$trunk" ]] && die "cannot rename trunk branch"
+
+  # Rename the git branch
+  git branch -m "$cur" "$new_name"
+
+  # Update gs tracking: transfer parent to new name
+  if is_tracked "$cur"; then
+    local parent
+    parent="$(get_parent "$cur")"
+    set_parent "$new_name" "$parent"
+    remove_tracking "$cur"
+  fi
+
+  # Reparent any children that pointed to the old name
+  local children
+  children="$(get_children "$cur")"
+  for child in $children; do
+    set_parent "$child" "$new_name"
+  done
+
+  success "renamed '$cur' to '$new_name'"
+}
+
 # Open the PR for the current branch in the browser.
 cmd_pr() {
   ensure_git_repo
