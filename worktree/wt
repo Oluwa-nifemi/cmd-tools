@@ -3,7 +3,7 @@
 # Creates worktrees in a configured base directory, copies over .env files
 # and CLAUDE.local.md, then cds in the new worktree.
 #
-# Run `wt --install <path>` once to set your worktrees directory.
+# Run `wt install <path>` once to set your worktrees directory.
 # The path is written directly into this file so there's nothing else to configure.
 
 # ── SETTINGS (modified by wt --install) ────────────────────────────────────
@@ -19,15 +19,15 @@ wt() {
   if [[ -z "$1" ]]; then
     echo "wt — git worktree manager"
     echo ""
-    echo "Usage: wt <name> [base-branch]   Create a worktree and open Claude"
-    echo "       wt --list                  List all worktrees"
-    echo "       wt --switch <name>         Switch to a worktree by branch name"
-    echo "       wt --clean [name] [--force] Remove a worktree and its branch (defaults to current)"
-    echo "       wt --push [remote-branch]   Push to remote (defaults to same branch name)"
-    echo "       wt --install <path>        Set the base directory for worktrees"
+    echo "Usage: wt create <name> [base-branch]  Create a worktree and open Claude"
+    echo "       wt list                     List all worktrees"
+    echo "       wt switch <name>            Switch to a worktree by branch name"
+    echo "       wt clean [name] [--force]   Remove a worktree and its branch (defaults to current)"
+    echo "       wt push [remote-branch]     Push to remote (defaults to same branch name)"
+    echo "       wt install <path>           Set the base directory for worktrees"
     if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
       echo ""
-      echo "⚠ Not configured yet. Run: wt --install <path>"
+      echo "⚠ Not configured yet. Run: wt install <path>"
     else
       echo ""
       echo "Worktrees dir: $WT_WORKTREES_DIR"
@@ -35,9 +35,9 @@ wt() {
     return 0
   fi
 
-  if [[ "$1" == "--install" ]]; then
+  if [[ "$1" == "install" ]]; then
     local new_path="${2:-}"
-    [[ -z "$new_path" ]] && echo "Usage: wt --install <path>" && return 1
+    [[ -z "$new_path" ]] && echo "Usage: wt install <path>" && return 1
 
     # Expand to absolute path
     new_path="${new_path:A}"
@@ -52,7 +52,7 @@ wt() {
     return 0
   fi
 
-  if [[ "$1" == "--push" ]]; then
+  if [[ "$1" == "push" ]]; then
     local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
     local remote_branch="${2:-$branch}"
     git push -u origin "$branch:$remote_branch" --force-with-lease
@@ -60,31 +60,31 @@ wt() {
   fi
 
   if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
-    echo "wt is not configured yet. Run: wt --install <path>"
+    echo "wt is not configured yet. Run: wt install <path>"
     return 1
   fi
 
   local repo_name="$(basename $(git rev-parse --show-toplevel))"
   local worktrees_dir="$WT_WORKTREES_DIR/$repo_name"
 
-  if [[ "$1" == "--list" ]]; then
+  if [[ "$1" == "list" ]]; then
     git worktree list
     return 0
   fi
 
-  if [[ "$1" == "--switch" ]]; then
+  if [[ "$1" == "switch" ]]; then
     local name="${2:-}"
-    [[ -z "$name" ]] && echo "Usage: wt --switch <name>" && return 1
+    [[ -z "$name" ]] && echo "Usage: wt switch <name>" && return 1
     local target="$worktrees_dir/$name"
     if [[ ! -d "$target" ]]; then
-      echo "wt --switch: no worktree found at $target"
+      echo "wt switch: no worktree found at $target"
       return 1
     fi
     cd "$target"
     return 0
   fi
 
-  if [[ "$1" == "--clean" ]]; then
+  if [[ "$1" == "clean" ]]; then
     local force=0
     local name=""
 
@@ -102,7 +102,7 @@ wt() {
     if [[ -n "$name" ]]; then
       local worktree_path="$worktrees_dir/$name"
       if [[ ! -d "$worktree_path" ]]; then
-        echo "wt --clean: no worktree found at $worktree_path"
+        echo "wt clean: no worktree found at $worktree_path"
         return 1
       fi
       local branch="$name"
@@ -110,7 +110,7 @@ wt() {
       local worktree_path="$(pwd)"
       local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
       if [[ "$worktree_path" == "$main_repo" ]]; then
-        echo "wt --clean: you're in the main worktree, not a linked one. Aborting."
+        echo "wt clean: you're in the main worktree, not a linked one. Aborting."
         return 1
       fi
     fi
@@ -120,7 +120,7 @@ wt() {
       if [[ -n "$uncommitted" ]]; then
         echo "Uncommitted changes in $worktree_path:"
         git -C "$worktree_path" status --short
-        echo "\nRun 'wt --clean $name --force' to delete anyway."
+        echo "\nRun 'wt clean $name --force' to delete anyway."
         return 1
       fi
     fi
@@ -132,8 +132,15 @@ wt() {
     return 0
   fi
 
-  local name="$1"
-  local base="${2:-$(git rev-parse --abbrev-ref HEAD)}"
+  if [[ "$1" == "create" ]]; then
+    local name="${2:-}"
+    local base="${3:-$(git rev-parse --abbrev-ref HEAD)}"
+    [[ -z "$name" ]] && echo "Usage: wt create <name> [base-branch]" && return 1
+  else
+    local name="$1"
+    local base="${2:-$(git rev-parse --abbrev-ref HEAD)}"
+  fi
+
   local root="$(git rev-parse --show-toplevel)"
   if git rev-parse --verify "refs/heads/$name" &>/dev/null; then
     git worktree add "$worktrees_dir/$name" "$name" || return 1
