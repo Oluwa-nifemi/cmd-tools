@@ -38,7 +38,9 @@ wt() {
   if [[ "$1" == "c" || "$1" == "create" ]]; then
     local name="${2:-}"
     local base="${3:-$(git rev-parse --abbrev-ref HEAD)}"
-    [[ -z "$name" ]] && echo "Usage: wt create <name> [base-branch]" && return 1
+    local use_remote=0
+    [[ -z "$name" ]] && echo "Usage: wt create <name> [base-branch] [--remote]" && return 1
+    [[ "$3" == "--remote" || "$4" == "--remote" ]] && use_remote=1
   elif [[ "$1" == "install" ]]; then
     local new_path="${2:-}"
     [[ -z "$new_path" ]] && echo "Usage: wt install <path>" && return 1
