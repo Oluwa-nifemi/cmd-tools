@@ -454,24 +454,71 @@ restack_continue() {
   success "restack continued and completed"
 }
 
-# Show the stack as a tree with branch names and commit counts.
-cmd_ls() {
-  ensure_gs_init
+# Build a cache dir with PR status and dirty state for all tracked branches.
+# Returns the cache directory path via stdout.
+build_ls_cache() {
+  local cache_dir
+  cache_dir="$(gs_dir)/ls_cache"
+  rm -rf "$cache_dir" 2>/dev/null
+  mkdir -p "$cache_dir"
+
   local trunk
   trunk="$(trunk_branch)"
-  local cur
+
+  # PR status: query gh once per branch.
+  if command -v gh &>/dev/null; then
+    local all_branches=()
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && all_branches+=("$b")
+    done <<< "$(collect_descendants_bfs "$trunk")"
+    for b in "${all_branches[@]}"; do
+      local state
+      state="$(gh pr view "$b" --json state --jq '.state' 2>/dev/null)" || state=""
+      [[ -n "$state" ]] && echo "$state" > "$cache_dir/pr_$(encode_branch "$b")"
+    done
+  fi
+
+  # Dirty state: map worktree paths → branch names, then check git status.
+  local wt_path="" wt_head=""
+  while IFS= read -r line; do
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+      wt_head=""
+    elif [[ "$line" == "HEAD "* ]]; then
+      wt_head="${line#HEAD }"
+    elif [[ -z "$line" && -n "$wt_path" ]]; then
+      local br
+      br="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)" || br=""
+      if [[ -n "$br" ]] && [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+        touch "$cache_dir/dirty_$(encode_branch "$br")"
+      fi
+      wt_path=""
+      wt_head=""
+    fi
+  done < <(git worktree list --porcelain)
+
+  echo "$cache_dir"
+}
+
+# Show the stack as a tree with branch names, commit counts, PR status, and dirty state.
+cmd_ls() {
+  ensure_gs_init
+  local trunk cur cache_dir
+  trunk="$(trunk_branch)"
   cur="$(current_branch)"
+  cache_dir="$(build_ls_cache)"
 
   echo -e "${BOLD}${YELLOW}$trunk${RESET}"
-  print_tree "$trunk" "" "$cur"
+  print_tree "$trunk" "" "$cur" "$cache_dir"
 }
 
 # Recursive tree printer
-# $1 = parent branch, $2 = prefix for indentation, $3 = current branch
+# $1 = parent branch, $2 = prefix for indentation, $3 = current branch, $4 = cache dir
 print_tree() {
   local parent="$1"
   local prefix="$2"
   local cur="$3"
+  local cache_dir="$4"
 
   local children=()
   while IFS= read -r c; do
@@ -492,6 +539,23 @@ print_tree() {
 
     local commits
     commits="$(count_commits "$child")"
+
+    # PR status indicator
+    local pr=""
+    local pr_file="$cache_dir/pr_$(encode_branch "$child")"
+    if [[ -f "$pr_file" ]]; then
+      case "$(cat "$pr_file")" in
+        OPEN)   pr=" ${GREEN}[open]${RESET}" ;;
+        MERGED) pr=" ${MAGENTA}[merged]${RESET}" ;;
+        CLOSED) pr=" ${RED}[closed]${RESET}" ;;
+      esac
+    fi
+
+    # Dirty indicator
+    local dirty=""
+    local dirty_file="$cache_dir/dirty_$(encode_branch "$child")"
+    [[ -f "$dirty_file" ]] && dirty=" ${YELLOW}*${RESET}"
+
     local marker=""
     if [[ "$child" == "$cur" ]]; then
       marker=" ${GREEN}← you are here${RESET}"
@@ -502,27 +566,28 @@ print_tree() {
       color="${GREEN}${BOLD}"
     fi
 
-    echo -e "${prefix}${connector}${color}${child}${RESET} ${DIM}(${commits} commit$([ "$commits" != "1" ] && echo "s"))${RESET}${marker}"
-    print_tree "$child" "$child_prefix" "$cur"
+    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty} ${DIM}(${commits} commit$([ "$commits" != "1" ] && echo "s"))${RESET}${marker}"
+    print_tree "$child" "$child_prefix" "$cur" "$cache_dir"
   done
 }
 
-# Show the stack tree with individual commit hashes and messages per branch.
+# Show the stack tree with individual commit hashes, messages, PR status, and dirty state.
 cmd_log() {
   ensure_gs_init
-  local trunk
+  local trunk cur cache_dir
   trunk="$(trunk_branch)"
-  local cur
   cur="$(current_branch)"
+  cache_dir="$(build_ls_cache)"
 
   echo -e "${BOLD}${YELLOW}$trunk${RESET}"
-  print_log_tree "$trunk" "" "$cur"
+  print_log_tree "$trunk" "" "$cur" "$cache_dir"
 }
 
 print_log_tree() {
   local parent="$1"
   local prefix="$2"
   local cur="$3"
+  local cache_dir="$4"
 
   local children=()
   while IFS= read -r c; do
@@ -541,6 +606,22 @@ print_log_tree() {
       child_prefix="${prefix}    "
     fi
 
+    # PR status indicator
+    local pr=""
+    local pr_file="$cache_dir/pr_$(encode_branch "$child")"
+    if [[ -f "$pr_file" ]]; then
+      case "$(cat "$pr_file")" in
+        OPEN)   pr=" ${GREEN}[open]${RESET}" ;;
+        MERGED) pr=" ${MAGENTA}[merged]${RESET}" ;;
+        CLOSED) pr=" ${RED}[closed]${RESET}" ;;
+      esac
+    fi
+
+    # Dirty indicator
+    local dirty=""
+    local dirty_file="$cache_dir/dirty_$(encode_branch "$child")"
+    [[ -f "$dirty_file" ]] && dirty=" ${YELLOW}*${RESET}"
+
     local marker=""
     if [[ "$child" == "$cur" ]]; then
       marker=" ${GREEN}← you are here${RESET}"
@@ -551,7 +632,7 @@ print_log_tree() {
       color="${GREEN}${BOLD}"
     fi
 
-    echo -e "${prefix}${connector}${color}${child}${RESET}${marker}"
+    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty}${marker}"
 
     # Show commits on this branch
     local parent_branch
@@ -567,7 +648,7 @@ print_log_tree() {
       done <<< "$commits"
     fi
 
-    print_log_tree "$child" "$child_prefix" "$cur"
+    print_log_tree "$child" "$child_prefix" "$cur" "$cache_dir"
   done
 }
 
