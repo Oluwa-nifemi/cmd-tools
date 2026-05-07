@@ -21,6 +21,7 @@ wt() {
     echo "Usage: wt create <name> [base-branch]  Create a worktree and open Claude"
     echo "       wt list                     List all worktrees"
     echo "       wt switch [name]            Switch to a worktree (fuzzy match)"
+	    echo "       wt rename <old> <new>       Rename a worktree and its branch"
     echo "       wt clean [name] [--force]   Remove a worktree and its branch (defaults to current)"
 	    echo "       wt clean --merged           Remove all worktrees with merged branches"
     echo "       wt push [remote-branch]     Push to remote (defaults to same branch name)"
@@ -242,6 +243,33 @@ wt() {
     git worktree remove "$worktree_path" --force
     git branch -D "$branch"
     echo "Cleaned up worktree '$branch'."
+    return 0
+  fi
+
+  if [[ "$1" == "rename" ]]; then
+    local old_name="${2:-}"
+    local new_name="${3:-}"
+    [[ -z "$old_name" || -z "$new_name" ]] && echo "Usage: wt rename <old-name> <new-name>" && return 1
+
+    local old_path="$worktrees_dir/$old_name"
+    [[ ! -d "$old_path" ]] && echo "wt rename: no worktree found at $old_path" && return 1
+
+    local new_path="$worktrees_dir/$new_name"
+    [[ -d "$new_path" ]] && echo "wt rename: target '$new_name' already exists" && return 1
+
+    git -C "$old_path" branch -M "$old_name" "$new_name" 2>/dev/null || {
+      echo "wt rename: failed to rename branch '$old_name' to '$new_name'"
+      return 1
+    }
+
+    # Use git worktree move if available (Git 2.17+), otherwise fall back to mv.
+    if git worktree move "$old_path" "$new_path" 2>/dev/null; then
+      :
+    else
+      mv "$old_path" "$new_path"
+    fi
+    [[ "$(pwd)" == "$old_path" ]] && cd "$new_path"
+    echo "Renamed worktree '$old_name' -> '$new_name'."
     return 0
   fi
 
