@@ -1,6 +1,6 @@
 - Record video showing how it’s useful
 - [x] Wt switch can fuzzy match perhaps?
-- gs restack you restock the whole stack not just the level of stack you’re on
+- [x] gs restack you restock the whole stack not just the level of stack you’re on
 - The merge flow isn’t great
 - Interactive UI for wt install (for both WT_WORKTREES_DIR and WT_LINK_IGNORED)
 - Why does git stack always cause conflicts on merge? Perhaps have a gs-stack-create PR that just creates a PR with the squashed commits of each pr and updates it if it already exists
