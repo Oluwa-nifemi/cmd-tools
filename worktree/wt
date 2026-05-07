@@ -20,7 +20,7 @@ wt() {
     echo ""
     echo "Usage: wt create <name> [base-branch]  Create a worktree and open Claude"
     echo "       wt list                     List all worktrees"
-    echo "       wt switch <name>            Switch to a worktree by branch name"
+    echo "       wt switch [name]            Switch to a worktree (fuzzy match)"
     echo "       wt clean [name] [--force]   Remove a worktree and its branch (defaults to current)"
     echo "       wt push [remote-branch]     Push to remote (defaults to same branch name)"
     echo "       wt install <path>           Set the base directory for worktrees"
@@ -86,13 +86,68 @@ wt() {
 
   if [[ "$1" == "switch" ]]; then
     local name="${2:-}"
-    [[ -z "$name" ]] && echo "Usage: wt switch <name>" && return 1
-    local target="$worktrees_dir/$name"
-    if [[ ! -d "$target" ]]; then
-      echo "wt switch: no worktree found at $target"
+
+    # Gather linked worktree names (exclude bare/ main worktree).
+    local -a worktree_names=()
+    local wt_path=""
+    local wt_bare=0
+    while IFS= read -r line; do
+      if [[ "$line" == "worktree "* ]]; then
+        wt_path="${line#worktree }"
+        wt_bare=0
+      elif [[ "$line" == "bare" ]]; then
+        wt_bare=1
+      elif [[ -z "$line" ]]; then
+        if [[ "$wt_bare" != "1" && "$wt_path" != "$main_worktree" ]]; then
+          worktree_names+=("$(basename "$wt_path")")
+        fi
+        wt_path=""
+        wt_bare=0
+      fi
+    done < <(git worktree list --porcelain)
+
+    if [[ ${#worktree_names[@]} -eq 0 ]]; then
+      echo "wt switch: no linked worktrees found"
       return 1
     fi
-    cd "$target"
+
+    local -a matches=()
+    if [[ -n "$name" ]]; then
+      for wt_name in "${worktree_names[@]}"; do
+        [[ "$wt_name" == *"$name"* ]] && matches+=("$wt_name")
+      done
+      if [[ ${#matches[@]} -eq 0 ]]; then
+        echo "wt switch: no worktree matching '$name'"
+        return 1
+      elif [[ ${#matches[@]} -eq 1 ]]; then
+        cd "$worktrees_dir/${matches[1]}" || return 1
+        return 0
+      fi
+    else
+      matches=("${worktree_names[@]}")
+    fi
+
+    # Interactive picker for multiple matches (or no filter).
+    local selected=""
+    if command -v fzf &>/dev/null; then
+      selected="$(printf '%s\n' "${matches[@]}" | fzf --prompt="worktree> ")"
+    else
+      echo "Select a worktree:"
+      local i=1
+      for wt_name in "${matches[@]}"; do
+        echo "  $i) $wt_name"
+        ((i++))
+      done
+      echo -n "> "
+      read -r selected_num
+      if [[ "$selected_num" =~ ^[0-9]+$ ]] && (( selected_num >= 1 && selected_num <= ${#matches[@]} )); then
+        selected="${matches[$selected_num]}"
+      fi
+    fi
+
+    if [[ -n "$selected" ]]; then
+      cd "$worktrees_dir/$selected" || return 1
+    fi
     return 0
   fi
 
