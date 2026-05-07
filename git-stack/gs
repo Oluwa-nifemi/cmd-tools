@@ -1078,29 +1078,40 @@ cmd_land() {
     [[ -z "$branch" ]] && die "could not determine bottom branch"
   fi
 
-  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
-    local parent
-    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$(trunk_branch)"
-    echo -e "${CYAN}[dry-run]${RESET} would merge PR for '${YELLOW}$branch${RESET}' into '$parent' ($strategy)"
-    echo "  would pull trunk and rebase children past merged commits"
-    echo "  would delete local branch '$branch'"
-    return 0
-  fi
-
   is_tracked "$branch" || die "'$branch' is not tracked by gs"
-
-  local trunk parent
-  trunk="$(trunk_branch)"
-  parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
 
   if ! command -v gh &>/dev/null; then
     die "gh CLI is required for 'gs land'"
   fi
 
-  # Verify a PR exists for the branch
+  # Check PR exists and review status
   local pr_state
   pr_state="$(gh pr view "$branch" --json state --jq '.state' 2>/dev/null)" || pr_state=""
-  [[ "$pr_state" == "OPEN" ]] || die "no open PR found for '$branch' (state: ${pr_state:-none})"
+  [[ -n "$pr_state" ]] || die "no PR found for '$branch'"
+  [[ "$pr_state" == "OPEN" ]] || die "PR for '$branch' is not open (state: ${pr_state})"
+
+  local review
+  review="$(gh pr view "$branch" --json reviewDecision --jq '.reviewDecision' 2>/dev/null)" || review=""
+  case "$review" in
+    APPROVED) ;;
+    "") ;; # no review requirements on the repo — let gh pr merge handle it
+    CHANGES_REQUESTED) die "PR for '$branch' has changes requested — cannot land" ;;
+    REVIEW_REQUIRED)  die "PR for '$branch' still needs review approval" ;;
+  esac
+
+  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
+    local parent
+    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$(trunk_branch)"
+    echo -e "${CYAN}[dry-run]${RESET} would merge PR for '${YELLOW}$branch${RESET}' into '$parent' ($strategy)"
+    [[ "$review" == "APPROVED" ]] && echo "  review: ${GREEN}APPROVED${RESET}"
+    echo "  would pull trunk and rebase children past merged commits"
+    echo "  would delete local branch '$branch'"
+    return 0
+  fi
+
+  local trunk parent
+  trunk="$(trunk_branch)"
+  parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
 
   info "merging PR for '$branch' into '$parent' ($strategy)..."
   if ! gh pr merge "$branch" "$strategy" --delete-branch 2>&1 | sed 's/^/  /'; then
