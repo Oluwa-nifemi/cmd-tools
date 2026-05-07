@@ -864,9 +864,10 @@ _create_stack_prs() {
       # Update the base branch in case it changed
       gh pr edit "$branch" --base "$parent" 2>/dev/null || true
     else
-      # Generate title from branch name: slashes/hyphens -> spaces, title case
+      # Use the first commit message on the branch as the PR title.
       local title
-      title="$(echo "$branch" | sed 's|[-/]| |g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')"
+      title="$(git log --format=%s --reverse "$parent".."$branch" 2>/dev/null | head -1)"
+      [[ -z "$title" ]] && title="$branch"
 
       info "creating draft PR for '$branch' -> '$parent'..."
       local pr_url
