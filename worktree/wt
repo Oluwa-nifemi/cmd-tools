@@ -22,6 +22,7 @@ wt() {
     echo "       wt list                     List all worktrees"
     echo "       wt switch [name]            Switch to a worktree (fuzzy match)"
     echo "       wt clean [name] [--force]   Remove a worktree and its branch (defaults to current)"
+	    echo "       wt clean --merged           Remove all worktrees with merged branches"
     echo "       wt push [remote-branch]     Push to remote (defaults to same branch name)"
     echo "       wt install <path>           Set the base directory for worktrees"
     if [[ "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]]; then
@@ -154,17 +155,61 @@ wt() {
   if [[ "$1" == "clean" ]]; then
     local force=0
     local name=""
+    local merged_only=0
 
-    # Parse args: --force and optional name can appear in any order
+    # Parse args: --force, --merged, and optional name can appear in any order
     for arg in "${@:2}"; do
       if [[ "$arg" == "--force" ]]; then
         force=1
+      elif [[ "$arg" == "--merged" ]]; then
+        merged_only=1
       else
         name="$arg"
       fi
     done
 
     local main_repo="$(git worktree list --porcelain | awk '/^worktree / { if (NR==1) print $2 }')"
+
+    # --merged: clean all worktrees whose branches are merged
+    if [[ $merged_only -eq 1 ]]; then
+      if [[ -n "$name" ]]; then
+        echo "wt clean: --merged does not take a name argument"
+        return 1
+      fi
+      local wt_path="" wt_bare=0 wt_name="" cleaned=0
+      while IFS= read -r line; do
+        if [[ "$line" == "worktree "* ]]; then
+          wt_path="${line#worktree }"
+          wt_bare=0
+        elif [[ "$line" == "bare" ]]; then
+          wt_bare=1
+        elif [[ -z "$line" ]]; then
+          if [[ "$wt_bare" != "1" && "$wt_path" != "$main_repo" ]]; then
+            wt_name="$(basename "$wt_path")"
+            local merged=0
+            if command -v gh &>/dev/null; then
+              local state
+              state="$(gh pr view "$wt_name" --json state --jq '.state' 2>/dev/null)" || state=""
+              [[ "$state" == "MERGED" ]] && merged=1
+            fi
+            if [[ $merged -eq 0 ]]; then
+              git -C "$main_repo" branch --merged HEAD 2>/dev/null | grep -q "$wt_name" && merged=1
+            fi
+            if [[ $merged -eq 1 ]]; then
+              [[ "$(pwd)" == "$wt_path" ]] && cd "$main_repo"
+              git worktree remove "$wt_path" --force 2>/dev/null
+              git branch -D "$wt_name" 2>/dev/null
+              echo "Cleaned up merged worktree '$wt_name'."
+              cleaned=$((cleaned + 1))
+            fi
+          fi
+          wt_path=""
+          wt_bare=0
+        fi
+      done < <(git worktree list --porcelain)
+      [[ $cleaned -eq 0 ]] && echo "No merged worktrees to clean."
+      return 0
+    fi
 
     if [[ -n "$name" ]]; then
       local worktree_path="$worktrees_dir/$name"
