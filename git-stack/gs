@@ -423,9 +423,15 @@ restack_continue() {
   state_file="$(gs_dir)/restack_state"
   [[ -f "$state_file" ]] || die "no restack in progress"
 
-  # Source the state
-  local child base original
-  eval "$(cat "$state_file")"
+  # Parse state file safely (child, base, original one per line)
+  local child="" base="" original=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      child) child="$value" ;;
+      base) base="$value" ;;
+      original) original="$value" ;;
+    esac
+  done < "$state_file"
 
   # Continue the rebase
   if ! git rebase --continue; then
@@ -435,8 +441,9 @@ restack_continue() {
 
   rm -f "$state_file"
 
-  # Continue restacking children of the child we just rebased
-  restack_upstack "$child"
+  # Resume from the parent so remaining siblings get processed too.
+  # The just-resolved child will be skipped by the "already up to date" check.
+  restack_upstack "$base"
 
   # Return to original branch
   if branch_exists "$original"; then
