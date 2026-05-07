@@ -834,6 +834,17 @@ cmd_fold() {
   local trunk
   trunk="$(trunk_branch)"
 
+  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
+    echo -e "${CYAN}[dry-run]${RESET} would squash-merge '${YELLOW}$cur${RESET}' into '$parent'"
+    local children
+    children="$(get_children "$cur")"
+    for child in $children; do
+      echo "  would reparent '$child' to '$parent'"
+    done
+    echo "  would delete branch '$cur' and restack children"
+    return 0
+  fi
+
   [[ "$parent" == "$trunk" ]] && [[ "$cur" == "$trunk" ]] && die "cannot fold trunk"
 
   # Reparent children to the parent
@@ -1067,6 +1078,15 @@ cmd_land() {
     [[ -z "$branch" ]] && die "could not determine bottom branch"
   fi
 
+  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
+    local parent
+    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$(trunk_branch)"
+    echo -e "${CYAN}[dry-run]${RESET} would merge PR for '${YELLOW}$branch${RESET}' into '$parent' ($strategy)"
+    echo "  would pull trunk and rebase children past merged commits"
+    echo "  would delete local branch '$branch'"
+    return 0
+  fi
+
   is_tracked "$branch" || die "'$branch' is not tracked by gs"
 
   local trunk parent
@@ -1138,6 +1158,28 @@ find_bottom() {
 # Pull trunk, drop merged branches, and restack the rest onto trunk.
 cmd_sync() {
   ensure_gs_init
+
+  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
+    echo -e "${CYAN}[dry-run]${RESET} would fetch, pull trunk, and check for merged PRs..."
+    local trunk
+    trunk="$(trunk_branch)"
+    local all_branches=()
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && all_branches+=("$b")
+    done <<< "$(collect_descendants_bfs "$trunk")"
+    local found=0
+    for branch in "${all_branches[@]}"; do
+      branch_exists "$branch" || continue
+      if branch_is_merged "$branch"; then
+        echo "  ${YELLOW}would delete${RESET} merged branch '$branch'"
+        found=1
+      fi
+    done
+    [[ $found -eq 0 ]] && echo "  no merged branches found"
+    echo "  ${YELLOW}would restack${RESET} remaining branches onto '$trunk'"
+    return 0
+  fi
+
   local trunk
   trunk="$(trunk_branch)"
   local original
@@ -1249,6 +1291,18 @@ cmd_delete() {
   trunk="$(trunk_branch)"
 
   [[ "$branch" == "$trunk" ]] && die "cannot delete trunk branch"
+
+  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
+    echo -e "${CYAN}[dry-run]${RESET} would delete branch '${YELLOW}$branch${RESET}'"
+    local parent
+    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
+    local children
+    children="$(get_children "$branch")"
+    for child in $children; do
+      echo "  would reparent '$child' to '$parent'"
+    done
+    return 0
+  fi
 
   local cur
   cur="$(current_branch)"
@@ -1383,6 +1437,13 @@ HELP
 main() {
   local cmd="${1:-help}"
   shift 2>/dev/null || true
+
+  # Global --dry-run / -n flag (before the command)
+  if [[ "$cmd" == "--dry-run" || "$cmd" == "-n" ]]; then
+    export GS_DRY_RUN=1
+    cmd="${1:-help}"
+    shift 2>/dev/null || true
+  fi
 
   case "$cmd" in
     init)     cmd_init "$@" ;;
