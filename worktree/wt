@@ -15,7 +15,7 @@
 : "${WT_LINK_IGNORED:=CLAUDE.local.md .env*}"
 
 wt() {
-  if [[ -z "$1" ]]; then
+  if [[ -z "$1" || "$1" == "--help" || "$1" == "-h" ]]; then
     echo "wt — git worktree manager"
     echo ""
     echo "Usage: wt create <name> [base-branch]  Create a worktree and open Claude"
