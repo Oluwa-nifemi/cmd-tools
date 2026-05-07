@@ -78,7 +78,8 @@ wt() {
 
   local main_worktree="$(git worktree list --porcelain | awk '/^worktree / { print $2; exit }')"
   local repo_name="$(basename "$main_worktree")"
-  local worktrees_dir="$WT_WORKTREES_DIR/$repo_name"
+  local worktrees_dir
+  worktrees_dir="$(cd "$WT_WORKTREES_DIR/$repo_name" 2>/dev/null && pwd -P || echo "$WT_WORKTREES_DIR/$repo_name")"
 
   if [[ "$1" == "list" ]]; then
     git worktree list
@@ -100,7 +101,7 @@ wt() {
         wt_bare=1
       elif [[ -z "$line" ]]; then
         if [[ "$wt_bare" != "1" && "$wt_path" != "$main_worktree" ]]; then
-          worktree_names+=("$(basename "$wt_path")")
+          worktree_names+=("${wt_path#$worktrees_dir/}")
         fi
         wt_path=""
         wt_bare=0
@@ -185,7 +186,7 @@ wt() {
           wt_bare=1
         elif [[ -z "$line" ]]; then
           if [[ "$wt_bare" != "1" && "$wt_path" != "$main_repo" ]]; then
-            wt_name="$(basename "$wt_path")"
+            wt_name="${wt_path#$worktrees_dir/}"
             local merged=0
             if command -v gh &>/dev/null; then
               local state
