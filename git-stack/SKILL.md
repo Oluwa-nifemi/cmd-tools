@@ -10,9 +10,7 @@ A CLI tool for managing stacked branches in git, with multi-commit support.
 
 ## Inspiration
 
-This is inspired by [Graphite](https://graphite.dev) — a tool for stacked PRs where each branch represents a small, reviewable unit of work stacked on top of another.
-
-The key difference: Graphite treats each branch as a single commit that gets amended with `gt modify`. We don't like that. Branches here can have **multiple commits**. `gs commit` adds a new commit to the current branch and then rebases all branches above it so changes propagate upward through the stack.
+Inspired by [Graphite](https://graphite.dev). The key difference: Graphite treats each branch as a single commit amended via `gt modify`. We don't like that — branches here can have **multiple commits**. `gs commit` adds a new commit and rebases all upstack branches so changes propagate upward.
 
 ## How it works
 
@@ -22,11 +20,9 @@ A **stack** is a chain of branches where each branch knows its parent:
 main → feat/api → feat/frontend → feat/tests
 ```
 
-Metadata is stored in `.git/gs/` inside each repo:
-- `.git/gs/config` — the trunk branch name (e.g. `main`)
+Metadata lives in `.git/gs/`:
+- `.git/gs/config` — trunk branch name (e.g. `main`)
 - `.git/gs/branches/` — one file per tracked branch, containing its parent's name
-
-When you commit to a lower branch, all branches above it are automatically rebased onto the new state. This is the core mechanic — changes flow upward.
 
 ## Typical workflow
 
@@ -46,29 +42,9 @@ gs down                          # go back to feat/api
 # ... fix something ...
 gs commit -m "fix endpoint"      # feat/frontend auto-rebases on top
 
-gs ls                            # see the stack tree
-gs log                           # see the stack with commit messages
-gs push                          # push downstack to remote
-```
-
-## Retroactive tracking
-
-Already have branches that form a stack but aren't tracked? Add them in bottom-to-top order:
-
-```bash
-gs track feat/api feat/frontend feat/tests
-```
-
-Or stack them onto a specific branch:
-
-```bash
-gs track feat/logging --onto feat/api
-```
-
-To quickly add a single branch on top of wherever you are:
-
-```bash
-gs stack feat/logging    # stacks it on your current branch
+gs ls                            # see the stack tree with PR status
+gs land                          # merge the bottom PR into trunk
+gs sync                          # pull trunk, drop merged branches, restack
 ```
 
 ## Commands
@@ -83,14 +59,17 @@ gs stack feat/logging    # stacks it on your current branch
 |---------|-------------|
 | `gs create <name> [-m msg]` | Create a new branch stacked on current |
 | `gs commit [-a] [-m msg]` | Commit and auto-restack all upstack branches |
+| `gs rename <new-name>` | Rename the current branch and update tracking |
 | `gs checkout <branch>` / `gs co` | Passthrough to git checkout |
 
 ### Viewing
 | Command | Description |
 |---------|-------------|
-| `gs ls` / `gs list` | Show the stack as a tree with commit counts |
-| `gs log` | Show the stack tree with commit hashes and messages |
+| `gs ls` / `gs list` | Show the stack tree with commit counts, PR status, and dirty state |
+| `gs log` | Show the stack tree with commit hashes, messages, PR status, and dirty state |
 | `gs diff [branch]` | Diff against parent branch (or a specified branch) |
+
+PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` next to the name.
 
 ### Navigation
 | Command | Description |
@@ -107,15 +86,31 @@ gs stack feat/logging    # stacks it on your current branch
 | `gs stack <branch>` | Add a branch on top of the current one |
 | `gs restack [--all \| --continue]` | Manually rebase upstack (use after raw git commands) |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
+| `gs split <commit> <new-name>` | Split branch at a commit — rest becomes a new child branch |
+| `gs fold` | Squash-merge current branch into its parent and clean up |
+| `gs land [branch] [--squash\|--merge\|--rebase]` | Merge the bottommost PR into trunk (checks approval), pull, reparent children, delete branch |
+| `gs delete [branch]` | Delete branch from stack and git, reparent children |
 | `gs untrack [branch]` | Remove from gs tracking, keep git branch |
-| `gs fold` | Squash-merge current branch into its parent |
-| `gs delete [branch]` | Delete branch from stack and git |
+
+### Remote
+| Command | Description |
+|---------|-------------|
 | `gs push` | Push from current branch downward through stack to remote |
-| `gs push-pr` | Push downstack and create/update draft PRs (each targets its parent branch) |
+| `gs push-pr` | Push downstack and create/update draft PRs (titles from first commit message) |
 | `gs pr` | Open the PR for current branch in browser |
+| `gs sync` | Pull trunk, detect merged branches (squash-merge aware), reparent children, restack |
+
+### Global flags
+| Flag | Description |
+|------|-------------|
+| `gs --dry-run <command>` / `gs -n <command>` | Preview what would happen without changing anything. Works with `sync`, `land`, `fold`, `delete`. |
 
 ## When to use `gs restack`
 
-`gs commit` auto-restacks for you. You only need `gs restack` when you've used raw git commands (`git commit`, `git rebase`, `git amend`, etc.) and need to propagate those changes upward manually.
+`gs commit` auto-restacks for you. Use `gs restack` when you've used raw git commands (`git commit`, `git rebase`, `git amend`, etc.) and need to propagate changes manually.
 
-If a restack hits a conflict, resolve it, stage the files, then run `gs restack --continue`.
+If a restack hits a conflict, resolve it, stage the files, then run `gs restack --continue`. This now correctly processes all siblings of the conflicted branch, not just the resolved one.
+
+## Squash-merge handling
+
+When a branch is squash-merged into trunk, its original commits have new SHAs. `gs sync` and `gs land` snapshot the merged branch's tip before deletion and rebase children with `--onto <parent> <merged_tip>`, so only the child's own commits are carried forward — no conflicts or duplicates.
