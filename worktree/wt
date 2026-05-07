@@ -10,6 +10,11 @@
 WT_WORKTREES_DIR="__NOT_CONFIGURED__"
 # ── END SETTINGS ───────────────────────────────────────────────────────────
 
+# Space-separated globs (relative to the main worktree) that get hard-linked
+# into each new worktree. Override in your shell rc, e.g.:
+#   export WT_LINK_IGNORED="CLAUDE.local.md .env* .secrets/*"
+: "${WT_LINK_IGNORED:=CLAUDE.local.md .env*}"
+
 # Capture path to this file at source time (not inside the function)
 WT_SELF_FILE="${(%):-%x}"
 
@@ -153,6 +158,15 @@ wt() {
     git worktree add "$worktrees_dir/$name" -b "$name" "$base" || return 1
   fi
   cd "$worktrees_dir/$name" || return 1
-  [[ -f "$root/CLAUDE.local.md" ]] && cp "$root/CLAUDE.local.md" .
-  for env in "$root"/.env*; do [[ -f "$env" ]] && cp "$env" .; done
+  # Hard-link each WT_LINK_IGNORED glob from the main worktree so the files
+  # behave like real files to tools that don't follow symlinks (and edits in
+  # either worktree affect both). Globs are evaluated against the main worktree.
+  local pattern match rel
+  for pattern in ${=WT_LINK_IGNORED}; do
+    for match in $root/${~pattern}(N.); do
+      rel="${match#$root/}"
+      mkdir -p "$(dirname "./$rel")"
+      ln -f "$match" "./$rel"
+    done
+  done
 }
