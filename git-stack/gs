@@ -287,8 +287,18 @@ cmd_commit() {
 
   git commit "${args[@]}"
 
+  # Save the pre-commit tip (HEAD^) so restack_upstack has a reliable fork
+  # point for our children. Without this, the first level of recursion falls
+  # into the merge-base fallback, which can over-collect commits when our
+  # branch already had history rewritten upstream.
+  local cur tips_dir
+  cur="$(current_branch)"
+  tips_dir="$(gs_dir)/old_tips"
+  mkdir -p "$tips_dir"
+  git rev-parse HEAD^ > "$tips_dir/$(encode_branch "$cur")" 2>/dev/null || true
+
   info "restacking upstack branches..."
-  restack_upstack "$(current_branch)"
+  restack_upstack "$cur"
   cleanup_restack_tips
   success "commit done and upstack restacked"
 }
@@ -353,7 +363,14 @@ restack_upstack() {
       # The old tip of the parent is the correct fork point.
       fork_point="$(cat "$old_tip_file")"
     else
+      # No saved old-tip for the parent. This happens when the user mutated
+      # the parent's history with raw git (rebase / reset / amend) before
+      # invoking `gs restack`. merge-base may go further back than the real
+      # fork — if the parent had its commits rewritten with new SHAs, the
+      # rebase can pick up duplicates of commits that already exist on the
+      # new parent. We surface this rather than silently producing duplicates.
       fork_point="$(git merge-base "$base" "$child" 2>/dev/null)" || fork_point="$base"
+      warn "no saved old-tip for '$base' (gs commit wasn't used). Falling back to merge-base. If '$base' was rebased, the upstack rebase may include duplicate commits or hit unexpected conflicts."
     fi
 
     # Skip if child is already up to date
