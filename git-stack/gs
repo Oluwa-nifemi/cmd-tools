@@ -863,6 +863,47 @@ cmd_fold() {
   fi
 }
 
+# Split the current branch at a commit: everything after <commit> becomes a new
+# child branch, and the current branch is reset to <commit>.
+cmd_split() {
+  ensure_gs_init
+  local commit="$1"
+  local new_name="$2"
+
+  [[ -z "$commit" || -z "$new_name" ]] && die "usage: gs split <commit> <new-branch-name>"
+
+  git rev-parse --verify "$commit" &>/dev/null || die "'$commit' is not a valid commit"
+
+  local cur
+  cur="$(current_branch)"
+  is_tracked "$cur" || die "'$cur' is not tracked by gs"
+  branch_exists "$new_name" && die "branch '$new_name' already exists"
+
+  local parent
+  parent="$(get_parent "$cur" 2>/dev/null)" || parent="$(trunk_branch)"
+
+  # Validate the split commit is in the right range
+  git merge-base --is-ancestor "$commit" HEAD 2>/dev/null || die "'$commit' is not an ancestor of HEAD"
+  [[ "$(git rev-parse "$commit")" == "$(git rev-parse HEAD)" ]] && die "split commit is HEAD — nothing to split"
+  [[ "$(git rev-parse "$commit")" == "$(git rev-parse "$parent")" ]] && die "split commit is same as parent '$parent' — nothing to keep"
+
+  local children
+  children="$(get_children "$cur")"
+
+  # Create new branch at HEAD, then reset current branch to split point
+  git branch "$new_name" HEAD --quiet
+  set_parent "$new_name" "$cur"
+  git reset --hard "$commit" --quiet
+
+  # Reparent former children to the new branch (it's now the tip)
+  for child in $children; do
+    set_parent "$child" "$new_name"
+    info "reparented '$child' to '$new_name'"
+  done
+
+  success "split '$cur' at $(git rev-parse --short "$commit"): new branch '$new_name'"
+}
+
 # Push from current branch down through the stack to trunk (force-with-lease).
 # Pushes bottom-up so remote branch dependencies are satisfied in order.
 cmd_push() {
@@ -1324,6 +1365,7 @@ Commands:
   move --onto <branch>    Move current branch to a new parent
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
+  split <commit> <name>   Split branch at commit, rest becomes new child
   land [branch]           Merge the bottommost PR into trunk and clean up
   push                    Push downstack branches to remote
   push-pr                 Push downstack and create/update draft PRs
@@ -1358,6 +1400,7 @@ main() {
     move)     cmd_move "$@" ;;
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
+    split)    cmd_split "$@" ;;
     land)     cmd_land "$@" ;;
     push)     cmd_push "$@" ;;
     push-pr)  cmd_push_pr "$@" ;;
