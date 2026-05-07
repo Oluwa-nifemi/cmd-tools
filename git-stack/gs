@@ -1003,6 +1003,97 @@ collect_descendants_bfs() {
   printf '%s\n' "${out[@]}"
 }
 
+# Merge the PR for the bottommost branch (or the named branch) and clean up locally.
+# Defaults to squash-merge. Use --merge or --rebase to override.
+cmd_land() {
+  ensure_gs_init
+  local branch=""
+  local strategy="--squash"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --squash) strategy="--squash" ;;
+      --merge)  strategy="--merge" ;;
+      --rebase) strategy="--rebase" ;;
+      -*) die "unknown flag: $1" ;;
+      *) branch="$1" ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$branch" ]]; then
+    branch="$(find_bottom "$(current_branch)")"
+    [[ -z "$branch" ]] && die "could not determine bottom branch"
+  fi
+
+  is_tracked "$branch" || die "'$branch' is not tracked by gs"
+
+  local trunk parent
+  trunk="$(trunk_branch)"
+  parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
+
+  if ! command -v gh &>/dev/null; then
+    die "gh CLI is required for 'gs land'"
+  fi
+
+  # Verify a PR exists for the branch
+  local pr_state
+  pr_state="$(gh pr view "$branch" --json state --jq '.state' 2>/dev/null)" || pr_state=""
+  [[ "$pr_state" == "OPEN" ]] || die "no open PR found for '$branch' (state: ${pr_state:-none})"
+
+  info "merging PR for '$branch' into '$parent' ($strategy)..."
+  if ! gh pr merge "$branch" "$strategy" --delete-branch 2>&1 | sed 's/^/  /'; then
+    die "failed to merge PR for '$branch'"
+  fi
+
+  # Pull trunk to get the merge commit
+  git checkout "$trunk" --quiet
+  git pull --ff-only --quiet || die "could not fast-forward '$trunk'"
+
+  # Snapshot the merged branch tip before deletion so children skip its commits
+  local merged_tip
+  merged_tip="$(git rev-parse "$branch" 2>/dev/null)" || merged_tip=""
+
+  # Reparent children and rebase past the merged commits
+  local children
+  children="$(get_children "$branch")"
+  for child in $children; do
+    set_parent "$child" "$parent"
+    info "reparented '$child' onto '$parent'"
+
+    if [[ -n "$merged_tip" ]] && branch_exists "$child"; then
+      if git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
+        info "  rebased '$child' past merged commits"
+      else
+        warn "conflict rebasing '$child' onto '$parent' — resolve manually, then run 'gs restack --all'"
+      fi
+    fi
+  done
+
+  # Delete the merged branch locally
+  remove_tracking "$branch"
+  if branch_exists "$branch"; then
+    git branch -D "$branch" --quiet 2>/dev/null
+  fi
+
+  success "landed '$branch' into '$parent'"
+}
+
+# Find the bottommost branch in the stack path leading to the given branch.
+find_bottom() {
+  local cur="$1"
+  local trunk
+  trunk="$(trunk_branch)"
+
+  while true; do
+    local parent
+    parent="$(get_parent "$cur" 2>/dev/null)" || break
+    [[ "$parent" == "$trunk" ]] && break
+    cur="$parent"
+  done
+  echo "$cur"
+}
+
 # Pull trunk, drop merged branches, and restack the rest onto trunk.
 cmd_sync() {
   ensure_gs_init
@@ -1233,6 +1324,7 @@ Commands:
   move --onto <branch>    Move current branch to a new parent
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
+  land [branch]           Merge the bottommost PR into trunk and clean up
   push                    Push downstack branches to remote
   push-pr                 Push downstack and create/update draft PRs
   pr                      Open the PR for current branch in browser
@@ -1266,6 +1358,7 @@ main() {
     move)     cmd_move "$@" ;;
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
+    land)     cmd_land "$@" ;;
     push)     cmd_push "$@" ;;
     push-pr)  cmd_push_pr "$@" ;;
     pr)       cmd_pr "$@" ;;
