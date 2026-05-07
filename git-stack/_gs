@@ -1,0 +1,108 @@
+#compdef gs
+
+# Completion for gs — stacked branch workflow tool.
+
+local -a subcmds
+subcmds=(
+  init create commit track stack restack
+  ls list log up down top bottom
+  move untrack fold split land
+  push push-pr pr
+  checkout co diff delete rename sync
+  help
+)
+
+_arguments -C \
+  '1: :->cmd' \
+  '*:: :->args'
+
+case "$state" in
+  cmd)
+    _describe -t commands 'gs command' subcmds
+    ;;
+  args)
+    local cmd="${words[1]}"
+    case "$cmd" in
+      create|track|stack|move|untrack|delete)
+        _gs_branch_names
+        ;;
+      up|down)
+        _message 'steps (optional)'
+        ;;
+      commit)
+        _alternative \
+          'flags:flag:(-a -m)' \
+          'files:file:_files'
+        ;;
+      restack)
+        _alternative \
+          'flags:flag:(--all --continue --upstack)'
+        ;;
+      push)
+        _gs_branch_names
+        ;;
+      land)
+        _alternative \
+          'flags:flag:(--squash --merge --rebase)' \
+          'branches:branch:$(_gs_branch_names)'
+        ;;
+      split)
+        if [[ $CURRENT -eq 2 ]]; then
+          _gs_commit_hashes
+        else
+          _message 'new branch name'
+        fi
+        ;;
+      push-pr)
+        ;;
+      checkout|co)
+        _gs_branch_names
+        ;;
+      diff|rename|sync)
+        _gs_branch_names
+        ;;
+      fold)
+        ;;
+    esac
+    ;;
+esac
+
+# Helper: complete tracked branch names.
+_gs_branch_names() {
+  local gs_dir d
+  gs_dir="$(git rev-parse --git-dir 2>/dev/null)/gs/branches" || return
+  [[ -d "$gs_dir" ]] || return
+  local -a names=()
+  local f encoded
+  for f in "$gs_dir"/*; do
+    [[ -f "$f" ]] || continue
+    encoded="$(basename "$f")"
+    names+=("$(echo "$encoded" | sed 's|%2F|/|g; s/%25/%/g')")
+  done
+  _describe -t branches 'branch' names
+}
+
+# Helper: complete recent commit hashes on current branch.
+_gs_commit_hashes() {
+  local parent trunk gs_dir cur_parent
+  trunk="$(cat "$(git rev-parse --git-dir 2>/dev/null)/gs/config" 2>/dev/null)" || trunk="main"
+  gs_dir="$(git rev-parse --git-dir 2>/dev/null)/gs/branches" || return
+  local cur
+  cur="$(git symbolic-ref --short HEAD 2>/dev/null)" || return
+  # Find parent of current branch
+  local encoded
+  encoded="$(echo "$cur" | sed 's/%/%25/g; s|/|%2F|g')"
+  if [[ -f "$gs_dir/$encoded" ]]; then
+    parent="$(cat "$gs_dir/$encoded")"
+  else
+    parent="$trunk"
+  fi
+  local -a commits=()
+  local line hash msg
+  while IFS= read -r line; do
+    hash="${line%% *}"
+    msg="${line#* }"
+    commits+=("${hash}:${msg:0:60}")
+  done < <(git log --oneline "${parent}..HEAD" 2>/dev/null)
+  _describe -t commits 'commit' commits
+}

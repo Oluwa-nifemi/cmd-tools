@@ -60,6 +60,21 @@ wt() {
     fi
     export WT_WORKTREES_DIR="$new_path"
 
+    # Install zsh completion for wt.
+    local comp_dir="$HOME/.zsh/completions"
+    mkdir -p "$comp_dir"
+    local comp_src="${functions_source[wt]:A:h}/_wt"
+    if [[ -f "$comp_src" ]]; then
+      cp "$comp_src" "$comp_dir/_wt"
+      if ! grep -q '$HOME/.zsh/completions' "$rc" 2>/dev/null; then
+        echo 'fpath=($HOME/.zsh/completions $fpath)' >> "$rc"
+        echo 'autoload -Uz compinit && compinit' >> "$rc"
+      fi
+      echo "Installed wt completion to $comp_dir/_wt"
+    else
+      echo "Note: _wt completion file not found at $comp_src — skipping"
+    fi
+
     echo "Worktrees directory set to: $new_path"
     echo "Saved as: export WT_WORKTREES_DIR in $rc"
     return 0

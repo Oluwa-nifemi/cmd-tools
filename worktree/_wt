@@ -1,0 +1,47 @@
+#compdef wt
+
+# Completion for wt — git worktree manager.
+
+local -a subcmds
+subcmds=(create c switch list rename clean push install help)
+
+_arguments -C \
+  '1: :->cmd' \
+  '*:: :->args'
+
+case "$state" in
+  cmd)
+    _describe -t commands 'wt command' subcmds
+    ;;
+  args)
+    local cmd="${words[1]}"
+    case "$cmd" in
+      switch|rename)
+        _wt_worktree_names
+        ;;
+      clean)
+        _alternative \
+          'flags:flag:(--force --merged)' \
+          'worktrees:worktree:$(_wt_worktree_names)'
+        ;;
+    esac
+    ;;
+esac
+
+# Helper: output worktree names for the current repo.
+_wt_worktree_names() {
+  local wt_dir main_wt repo_name dir
+  wt_dir="${WT_WORKTREES_DIR:-}"
+  [[ -z "$wt_dir" ]] && return
+  main_wt="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2; exit }')"
+  [[ -z "$main_wt" ]] && return
+  repo_name="$(basename "$main_wt")"
+  dir="$wt_dir/$repo_name"
+  [[ -d "$dir" ]] || return
+  local -a names=()
+  local d
+  for d in "$dir"/*(/); do
+    names+=("${d#$dir/}")
+  done
+  _describe -t worktrees 'worktree' names
+}

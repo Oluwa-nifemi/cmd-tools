@@ -46,6 +46,13 @@ wt install ~/Documents/Programming/worktrees
 | `wt install <path>` | Set `WT_WORKTREES_DIR`, persist as an export in `~/.zshrc`. |
 | `wt --help` / `wt -h` | Show usage. |
 
+## Tab completion
+
+`wt install` automatically installs zsh tab completion:
+- Completes subcommands (`create`, `switch`, `rename`, etc.)
+- Completes worktree names for `switch`, `rename`, and `clean`
+- `clean` also completes `--force` and `--merged`
+
 ## Branch names with slashes
 
 Branch names like `feat/api` create nested directory structures under the worktrees dir. `wt switch`, `wt clean`, and `wt rename` all handle these correctly — the full branch name (including slashes) is preserved.

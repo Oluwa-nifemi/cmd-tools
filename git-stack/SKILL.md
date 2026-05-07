@@ -111,6 +111,16 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 
 If a restack hits a conflict, resolve it, stage the files, then run `gs restack --continue`. This now correctly processes all siblings of the conflicted branch, not just the resolved one.
 
+## Tab completion
+
+Zsh completion is available via `_gs` in the repo. To install:
+
+```bash
+cp git-stack/_gs ~/.zsh/completions/_gs
+```
+
+Completes subcommands, tracked branch names, flags (`--all`, `--continue`, `--squash`, etc.), and commit hashes for `gs split`.
+
 ## Squash-merge handling
 
 When a branch is squash-merged into trunk, its original commits have new SHAs. `gs sync` and `gs land` snapshot the merged branch's tip before deletion and rebase children with `--onto <parent> <merged_tip>`, so only the child's own commits are carried forward — no conflicts or duplicates.
