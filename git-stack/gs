@@ -760,18 +760,19 @@ cmd_fold() {
   git checkout "$parent" --quiet
   info "merging '$cur' into '$parent'..."
   git merge --squash "$cur" --quiet
-  git commit --no-edit --quiet 2>/dev/null || {
-    warn "staged merge changes — commit them manually on '$parent'"
-  }
+  if git commit --no-edit --quiet 2>/dev/null; then
+    # Only delete if the commit succeeded
+    git branch -D "$cur" --quiet 2>/dev/null
+    remove_tracking "$cur"
 
-  # Delete the branch and its tracking
-  git branch -D "$cur" --quiet 2>/dev/null
-  remove_tracking "$cur"
+    # Restack children
+    restack_upstack "$parent"
 
-  # Restack children
-  restack_upstack "$parent"
-
-  success "folded '$cur' into '$parent'"
+    success "folded '$cur' into '$parent'"
+  else
+    warn "staged merge changes on '$parent' — commit manually, then run 'gs restack --all'. Branch '$cur' was NOT deleted."
+    return 1
+  fi
 }
 
 # Push from current branch down through the stack to trunk (force-with-lease).
