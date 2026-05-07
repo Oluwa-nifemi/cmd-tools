@@ -246,6 +246,8 @@ cmd_track() {
     die "branch '$parent' does not exist"
   fi
 
+  local initial_parent="${onto:-$trunk}"
+
   for b in "${branches[@]}"; do
     branch_exists "$b" || die "branch '$b' does not exist"
     set_parent "$b" "$parent"
@@ -253,6 +255,9 @@ cmd_track() {
     parent="$b"
   done
 
+  info "restacking tracked branches..."
+  restack_upstack "$initial_parent"
+  cleanup_restack_tips
   success "tracked ${#branches[@]} branch(es)"
 }
 
