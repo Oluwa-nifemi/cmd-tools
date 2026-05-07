@@ -82,7 +82,7 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 ### Stack management
 | Command | Description |
 |---------|-------------|
-| `gs track <b1> [b2] ... [--onto <branch>]` | Retroactively track existing branches as a stack |
+| `gs track <b1> [b2] ... [--onto <branch>]` | Track existing branches as a stack and auto-restack them |
 | `gs stack <branch>` | Add a branch on top of the current one |
 | `gs restack [--all \| --continue]` | Manually rebase upstack (use after raw git commands) |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
