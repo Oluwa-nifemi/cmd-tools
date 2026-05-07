@@ -158,15 +158,20 @@ wt() {
     git worktree add "$worktrees_dir/$name" -b "$name" "$base" || return 1
   fi
   cd "$worktrees_dir/$name" || return 1
-  # Hard-link each WT_LINK_IGNORED glob from the main worktree so the files
-  # behave like real files to tools that don't follow symlinks (and edits in
-  # either worktree affect both). Globs are evaluated against the main worktree.
+  # Bring each WT_LINK_IGNORED glob over from the main worktree. Files get
+  # hard-linked so they behave like real files to tools that don't follow
+  # symlinks; directories are symlinked (macOS can't hard-link directories).
+  # Globs are evaluated against the main worktree.
   local pattern match rel
   for pattern in ${=WT_LINK_IGNORED}; do
-    for match in $root/${~pattern}(N.); do
+    for match in $root/${~pattern}(N); do
       rel="${match#$root/}"
       mkdir -p "$(dirname "./$rel")"
-      ln -f "$match" "./$rel"
+      if [[ -d "$match" ]]; then
+        ln -sfn "$match" "./$rel"
+      else
+        ln -f "$match" "./$rel"
+      fi
     done
   done
 }
