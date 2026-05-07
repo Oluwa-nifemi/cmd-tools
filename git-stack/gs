@@ -876,6 +876,122 @@ _create_stack_prs() {
   done
 }
 
+# Check whether a branch has been merged. Uses `gh pr view` first (handles
+# squash-merge, which leaves no shared commits), then falls back to git cherry.
+branch_is_merged() {
+  local branch="$1"
+  if command -v gh &>/dev/null; then
+    local state
+    state="$(gh pr view "$branch" --json state --jq '.state' 2>/dev/null)" || state=""
+    case "$state" in
+      MERGED) return 0 ;;
+      OPEN|DRAFT) return 1 ;;
+    esac
+  fi
+  # Fallback: check whether all of the branch's commits are reachable from trunk.
+  local trunk
+  trunk="$(trunk_branch)"
+  local unmerged
+  unmerged="$(git cherry "$trunk" "$branch" 2>/dev/null | grep -c '^+' || true)"
+  [[ "$unmerged" == "0" ]]
+}
+
+# Collect all tracked descendants of a branch in BFS order (parent before child).
+collect_descendants_bfs() {
+  local root="$1"
+  local queue=("$root")
+  local out=()
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    local head="${queue[0]}"
+    queue=("${queue[@]:1}")
+    while IFS= read -r child; do
+      [[ -n "$child" ]] || continue
+      out+=("$child")
+      queue+=("$child")
+    done <<< "$(get_children "$head")"
+  done
+  printf '%s\n' "${out[@]}"
+}
+
+# Pull trunk, drop merged branches, and restack the rest onto trunk.
+cmd_sync() {
+  ensure_gs_init
+  local trunk
+  trunk="$(trunk_branch)"
+  local original
+  original="$(current_branch)"
+
+  info "fetching from origin..."
+  git fetch origin --prune --quiet
+
+  info "updating trunk '$trunk'..."
+  git checkout "$trunk" --quiet
+  git pull --ff-only --quiet || die "could not fast-forward '$trunk'. Resolve manually and retry."
+
+  # Walk all tracked branches in BFS order from trunk.
+  local all_branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && all_branches+=("$b")
+  done <<< "$(collect_descendants_bfs "$trunk")"
+
+  if [[ ${#all_branches[@]} -eq 0 ]]; then
+    success "no tracked branches; nothing to sync"
+    return 0
+  fi
+
+  info "checking ${#all_branches[@]} tracked branch(es) for merged PRs..."
+
+  # Detect merged branches. Process in BFS order so when we reparent a merged
+  # branch's children to its parent, the parent has already been resolved if it
+  # was also merged (its children were lifted to its grandparent earlier).
+  local merged=()
+  for branch in "${all_branches[@]}"; do
+    branch_exists "$branch" || continue
+    if branch_is_merged "$branch"; then
+      info "  '$branch' is merged"
+      merged+=("$branch")
+    fi
+  done
+
+  if [[ ${#merged[@]} -eq 0 ]]; then
+    info "no merged branches to clean up"
+  else
+    for branch in "${merged[@]}"; do
+      local parent
+      parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
+
+      # Reparent children up to this branch's current parent.
+      local children
+      children="$(get_children "$branch")"
+      for child in $children; do
+        set_parent "$child" "$parent"
+        info "reparented '$child' onto '$parent'"
+      done
+
+      remove_tracking "$branch"
+      if branch_exists "$branch"; then
+        git branch -D "$branch" --quiet 2>/dev/null || warn "could not delete branch '$branch'"
+      fi
+      success "deleted merged branch '$branch'"
+    done
+  fi
+
+  # Restack what's left on top of trunk. The merged branches' commits are
+  # already in trunk, so children that were reparented onto trunk will rebase
+  # cleanly past the duplicates.
+  info "restacking remaining branches onto '$trunk'..."
+  restack_upstack "$trunk"
+  cleanup_restack_tips
+
+  if branch_exists "$original"; then
+    git checkout "$original" --quiet
+  else
+    info "original branch '$original' was deleted; staying on '$trunk'"
+  fi
+
+  success "sync complete"
+}
+
 # Delete a branch from both git and gs tracking. Reparents children to parent.
 cmd_delete() {
   ensure_gs_init
@@ -1006,6 +1122,7 @@ Commands:
   checkout / co            Passthrough to git checkout
   diff [branch]           Diff against parent branch (or specified branch)
   delete [branch]         Delete branch from stack and git
+  sync                    Pull trunk, drop merged branches, restack the rest
   help                    Show this help message
 HELP
 }
@@ -1038,6 +1155,7 @@ main() {
     checkout|co) cmd_checkout "$@" ;;
     diff)     cmd_diff "$@" ;;
     delete)   cmd_delete "$@" ;;
+    sync)     cmd_sync "$@" ;;
     help|-h|--help) cmd_help ;;
     *)        die "unknown command: $cmd. Run 'gs help' for usage." ;;
   esac
