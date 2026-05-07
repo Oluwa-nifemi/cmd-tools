@@ -956,16 +956,43 @@ cmd_sync() {
   if [[ ${#merged[@]} -eq 0 ]]; then
     info "no merged branches to clean up"
   else
+    # Snapshot all merged branch tips before any rebasing or deletion.
+    # After squash-merge, the squashed commit in trunk has new SHAs — the
+    # merged branch's tip is the correct fork point for its children so
+    # only the children's own commits get rebased.
+    local tips_dir
+    tips_dir="$(gs_dir)/old_tips"
+    mkdir -p "$tips_dir"
+    for branch in "${merged[@]}"; do
+      branch_exists "$branch" || continue
+      local tip
+      tip="$(git rev-parse "$branch" 2>/dev/null)" || tip=""
+      if [[ -n "$tip" ]]; then
+        echo "$tip" > "$tips_dir/sync_merged_$(encode_branch "$branch")"
+      fi
+    done
+
     for branch in "${merged[@]}"; do
       local parent
       parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
 
-      # Reparent children up to this branch's current parent.
+      local merged_tip
+      merged_tip="$(cat "$tips_dir/sync_merged_$(encode_branch "$branch")" 2>/dev/null)" || merged_tip=""
+
+      # Reparent children and rebase them past the merged branch's commits.
       local children
       children="$(get_children "$branch")"
       for child in $children; do
         set_parent "$child" "$parent"
         info "reparented '$child' onto '$parent'"
+
+        if [[ -n "$merged_tip" ]] && branch_exists "$child"; then
+          if git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
+            info "  rebased '$child' past merged commits"
+          else
+            warn "conflict rebasing '$child' onto '$parent' — resolve manually, then run 'gs restack --all'"
+          fi
+        fi
       done
 
       remove_tracking "$branch"
@@ -976,9 +1003,9 @@ cmd_sync() {
     done
   fi
 
-  # Restack what's left on top of trunk. The merged branches' commits are
-  # already in trunk, so children that were reparented onto trunk will rebase
-  # cleanly past the duplicates.
+  # Restack what's left. Direct children of merged branches were already
+  # rebased above (skipping the merged commits), so restack_upstack will
+  # see them as up-to-date and only recurse into deeper descendants.
   info "restacking remaining branches onto '$trunk'..."
   restack_upstack "$trunk"
   cleanup_restack_tips
