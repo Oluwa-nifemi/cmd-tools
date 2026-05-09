@@ -134,6 +134,16 @@ get_children() {
   done
 }
 
+# Check if $1 is in the list of subsequent args
+is_in_list() {
+  local needle="$1"
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # Count commits on a branch relative to its parent
 count_commits() {
   local branch="$1"
@@ -1260,6 +1270,7 @@ cmd_sync() {
       merged_tip="$(cat "$tips_dir/sync_merged_$(encode_branch "$branch")" 2>/dev/null)" || merged_tip=""
 
       # Reparent children and rebase them past the merged branch's commits.
+      # Children that are also merged don't need rebasing — they'll be deleted.
       local children
       children="$(get_children "$branch")"
       for child in $children; do
@@ -1267,7 +1278,9 @@ cmd_sync() {
         info "reparented '$child' onto '$parent'"
 
         if [[ -n "$merged_tip" ]] && branch_exists "$child"; then
-          if git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
+          if is_in_list "$child" "${merged[@]}"; then
+            info "  '$child' is also merged, skipping rebase"
+          elif git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
             info "  rebased '$child' past merged commits"
           else
             warn "conflict rebasing '$child' onto '$parent' — resolve manually, then run 'gs restack --all'"
