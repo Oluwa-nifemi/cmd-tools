@@ -169,6 +169,33 @@ wt() {
     return 0
   fi
 
+  # Migrate Claude Code session JSONLs from a worktree's project dir into the
+  # main worktree's project dir, rewriting embedded path references so threads
+  # look like they were always rooted in the main worktree.
+  _wt_migrate_threads() {
+    local wt_path="$1" main_path="$2"
+    local proj_root="$HOME/.claude/projects"
+    local wt_proj="$proj_root/${wt_path//\//-}"
+    local main_proj="$proj_root/${main_path//\//-}"
+    [[ ! -d "$wt_proj" ]] && return 0
+    mkdir -p "$main_proj"
+    local migrated=0 file
+    local d=$'\x01'
+    for file in "$wt_proj"/*.jsonl(N); do
+      local tmp="$file.tmp"
+      # Use a delimiter unlikely to appear in absolute paths.
+      if sed "s${d}${wt_path}${d}${main_path}${d}g" "$file" > "$tmp"; then
+        mv "$tmp" "$main_proj/$(basename "$file")"
+        rm -f "$file"
+        migrated=$((migrated + 1))
+      else
+        rm -f "$tmp"
+      fi
+    done
+    rmdir "$wt_proj" 2>/dev/null
+    [[ $migrated -gt 0 ]] && echo "Migrated $migrated Claude thread(s) to main worktree."
+  }
+
   if [[ "$1" == "clean" ]]; then
     local force=0
     local name=""
@@ -214,6 +241,7 @@ wt() {
             fi
             if [[ $merged -eq 1 ]]; then
               [[ "$(pwd)" == "$wt_path" ]] && cd "$main_repo"
+              _wt_migrate_threads "$wt_path" "$main_repo"
               git worktree remove "$wt_path" --force 2>/dev/null
               git branch -D "$wt_name" 2>/dev/null
               echo "Cleaned up merged worktree '$wt_name'."
@@ -255,6 +283,7 @@ wt() {
     fi
 
     [[ "$(pwd)" == "$worktree_path" ]] && cd "$main_repo"
+    _wt_migrate_threads "$worktree_path" "$main_repo"
     git worktree remove "$worktree_path" --force
     git branch -D "$branch"
     echo "Cleaned up worktree '$branch'."
