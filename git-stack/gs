@@ -470,6 +470,7 @@ restack_continue() {
 # Build a cache dir with PR status and dirty state for all tracked branches.
 # Returns the cache directory path via stdout.
 build_ls_cache() {
+  local include_pr="${1:-0}"
   local cache_dir
   cache_dir="$(gs_dir)/ls_cache"
   rm -rf "$cache_dir" 2>/dev/null
@@ -478,8 +479,9 @@ build_ls_cache() {
   local trunk
   trunk="$(trunk_branch)"
 
-  # PR status: query gh once per branch.
-  if command -v gh &>/dev/null; then
+  # PR status: query gh once per branch. Skipped unless --pr was passed,
+  # since each gh call adds noticeable latency.
+  if [[ "$include_pr" == "1" ]] && command -v gh &>/dev/null; then
     local all_branches=()
     while IFS= read -r b; do
       [[ -n "$b" ]] && all_branches+=("$b")
@@ -516,10 +518,18 @@ build_ls_cache() {
 # Show the stack as a tree with branch names, commit counts, PR status, and dirty state.
 cmd_ls() {
   ensure_gs_init
+  local include_pr=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pr) include_pr=1 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
   local trunk cur cache_dir
   trunk="$(trunk_branch)"
   cur="$(current_branch)"
-  cache_dir="$(build_ls_cache)"
+  cache_dir="$(build_ls_cache "$include_pr")"
 
   echo -e "${BOLD}${YELLOW}$trunk${RESET}"
   print_tree "$trunk" "" "$cur" "$cache_dir"
@@ -587,10 +597,18 @@ print_tree() {
 # Show the stack tree with individual commit hashes, messages, PR status, and dirty state.
 cmd_log() {
   ensure_gs_init
+  local include_pr=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pr) include_pr=1 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
   local trunk cur cache_dir
   trunk="$(trunk_branch)"
   cur="$(current_branch)"
-  cache_dir="$(build_ls_cache)"
+  cache_dir="$(build_ls_cache "$include_pr")"
 
   echo -e "${BOLD}${YELLOW}$trunk${RESET}"
   print_log_tree "$trunk" "" "$cur" "$cache_dir"
@@ -657,7 +675,7 @@ print_log_tree() {
         local hash msg
         hash="${line%% *}"
         msg="${line#* }"
-        echo -e "${child_prefix}${DIM}${BLUE}$hash${RESET} ${DIM}$msg${RESET}"
+        echo -e "${child_prefix}$msg ${DIM}${BLUE}$hash${RESET}"
       done <<< "$commits"
     fi
 
