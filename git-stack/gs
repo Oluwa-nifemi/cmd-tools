@@ -950,27 +950,49 @@ cmd_split() {
 # Pushes bottom-up so remote branch dependencies are satisfied in order.
 cmd_push() {
   ensure_gs_init
-  local cur
-  cur="$(current_branch)"
+  local push_all=0
+  local extra_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) push_all=1 ;;
+      *) extra_args+=("$1") ;;
+    esac
+    shift
+  done
+
   local trunk
   trunk="$(trunk_branch)"
 
-  # Build the downstack path from current branch to trunk
   local stack=()
-  local b="$cur"
-  while [[ "$b" != "$trunk" ]]; do
-    stack+=("$b")
-    local p
-    p="$(get_parent "$b" 2>/dev/null)" || break
-    b="$p"
-  done
+  if [[ $push_all -eq 1 ]]; then
+    # Every tracked branch, BFS from trunk so parents push before children.
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && branch_exists "$b" && stack+=("$b")
+    done <<< "$(collect_descendants_bfs "$trunk")"
+  else
+    # Downstack path from current branch to trunk, bottom-first.
+    local cur
+    cur="$(current_branch)"
+    local path=()
+    local b="$cur"
+    while [[ "$b" != "$trunk" ]]; do
+      path+=("$b")
+      local p
+      p="$(get_parent "$b" 2>/dev/null)" || break
+      b="$p"
+    done
+    local plen=${#path[@]}
+    for ((i = plen - 1; i >= 0; i--)); do
+      stack+=("${path[$i]}")
+    done
+  fi
 
-  # Push from bottom to top (reverse)
   local len=${#stack[@]}
-  for ((i = len - 1; i >= 0; i--)); do
-    local branch="${stack[$i]}"
+  [[ $len -eq 0 ]] && die "nothing to push"
+
+  for branch in "${stack[@]}"; do
     info "pushing '$branch'..."
-    git push -u origin "$branch" --force-with-lease 2>&1 | sed "s/^/  /"
+    git push -u origin "$branch" --force-with-lease "${extra_args[@]}" 2>&1 | sed "s/^/  /"
   done
 
   success "pushed $len branch(es)"
@@ -1198,17 +1220,54 @@ find_bottom() {
 }
 
 # Pull trunk, drop merged branches, and restack the rest onto trunk.
+# By default only operates on the current stack (bottom of current branch's
+# stack and all its descendants) to avoid clashing with unrelated stacks.
+# Use --all to sync every tracked branch.
 cmd_sync() {
   ensure_gs_init
+  local scope="current"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)     scope="all" ;;
+      --current) scope="current" ;;
+      *) die "unknown argument: $1" ;;
+    esac
+    shift
+  done
+
+  local trunk
+  trunk="$(trunk_branch)"
+  local original
+  original="$(current_branch)"
+
+  # Determine the BFS root. --all walks from trunk; --current walks from the
+  # bottom of the stack the user is currently on. If the user is on trunk we
+  # have no current stack, so fall back to --all.
+  local sync_root="$trunk"
+  if [[ "$scope" == "current" ]]; then
+    if [[ "$original" == "$trunk" ]]; then
+      die "on trunk — no current stack to sync. Switch to a stacked branch, or pass --all."
+    elif is_tracked "$original"; then
+      sync_root="$(find_bottom "$original")"
+      info "syncing current stack rooted at '$sync_root'"
+    else
+      die "current branch '$original' is not tracked. Switch to a stacked branch, or pass --all."
+    fi
+  fi
 
   if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
     echo -e "${CYAN}[dry-run]${RESET} would fetch, pull trunk, and check for merged PRs..."
-    local trunk
-    trunk="$(trunk_branch)"
     local all_branches=()
-    while IFS= read -r b; do
-      [[ -n "$b" ]] && all_branches+=("$b")
-    done <<< "$(collect_descendants_bfs "$trunk")"
+    if [[ "$sync_root" == "$trunk" ]]; then
+      while IFS= read -r b; do
+        [[ -n "$b" ]] && all_branches+=("$b")
+      done <<< "$(collect_descendants_bfs "$trunk")"
+    else
+      all_branches+=("$sync_root")
+      while IFS= read -r b; do
+        [[ -n "$b" ]] && all_branches+=("$b")
+      done <<< "$(collect_descendants_bfs "$sync_root")"
+    fi
     local found=0
     for branch in "${all_branches[@]}"; do
       branch_exists "$branch" || continue
@@ -1218,14 +1277,9 @@ cmd_sync() {
       fi
     done
     [[ $found -eq 0 ]] && echo "  no merged branches found"
-    echo "  ${YELLOW}would restack${RESET} remaining branches onto '$trunk'"
+    echo "  ${YELLOW}would restack${RESET} remaining branches under '$sync_root'"
     return 0
   fi
-
-  local trunk
-  trunk="$(trunk_branch)"
-  local original
-  original="$(current_branch)"
 
   info "fetching from origin..."
   git fetch origin --prune --quiet
@@ -1234,11 +1288,18 @@ cmd_sync() {
   git checkout "$trunk" --quiet
   git pull --ff-only --quiet || die "could not fast-forward '$trunk'. Resolve manually and retry."
 
-  # Walk all tracked branches in BFS order from trunk.
+  # Walk tracked branches in BFS order from the chosen root.
   local all_branches=()
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && all_branches+=("$b")
-  done <<< "$(collect_descendants_bfs "$trunk")"
+  if [[ "$sync_root" == "$trunk" ]]; then
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && all_branches+=("$b")
+    done <<< "$(collect_descendants_bfs "$trunk")"
+  else
+    all_branches+=("$sync_root")
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && all_branches+=("$b")
+    done <<< "$(collect_descendants_bfs "$sync_root")"
+  fi
 
   if [[ ${#all_branches[@]} -eq 0 ]]; then
     success "no tracked branches; nothing to sync"
@@ -1315,8 +1376,8 @@ cmd_sync() {
   # Restack what's left. Direct children of merged branches were already
   # rebased above (skipping the merged commits), so restack_upstack will
   # see them as up-to-date and only recurse into deeper descendants.
-  info "restacking remaining branches onto '$trunk'..."
-  restack_upstack "$trunk"
+  info "restacking remaining branches under '$sync_root'..."
+  restack_upstack "$sync_root"
   cleanup_restack_tips
 
   if branch_exists "$original"; then
@@ -1455,8 +1516,8 @@ Commands:
   stack <branch>          Add a branch on top of the current one
   commit [-a] [-m msg]    Commit and auto-restack upstack
   restack [--all]         Rebase upstack branches (or entire stack)
-  ls / list               Show the stack tree
-  log                     Show stack tree with commit messages
+  ls / list [--pr]        Show the stack tree (--pr fetches PR status)
+  log [--pr]              Show stack tree with commit messages (--pr fetches PR status)
   up [N]                  Move up to child branch
   down [N]                Move down to parent branch
   top                     Jump to topmost branch in stack
@@ -1466,13 +1527,13 @@ Commands:
   fold                    Merge current branch into its parent
   split <commit> <name>   Split branch at commit, rest becomes new child
   land [branch]           Merge the bottommost PR into trunk and clean up
-  push                    Push downstack branches to remote
+  push [--all]            Push downstack branches to remote (--all = every tracked branch)
   push-pr                 Push downstack and create/update draft PRs
   pr                      Open the PR for current branch in browser
   checkout / co            Passthrough to git checkout
   diff [branch]           Diff against parent branch (or specified branch)
   delete [branch]         Delete branch from stack and git
-  sync                    Pull trunk, drop merged branches, restack the rest
+  sync [--all]            Pull trunk, drop merged branches, restack current stack (--all = every stack)
   help                    Show this help message
 HELP
 }
