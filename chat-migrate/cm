@@ -1,0 +1,154 @@
+# cm — copy a Claude Code chat session into another project directory
+#
+# Claude Code stores per-project session JSONLs under
+#   ~/.claude/projects/<absolute-path-with-slashes-as-dashes>/<session-id>.jsonl
+# and embeds the absolute project path inside the JSONL. Copying a chat into a
+# different working directory therefore requires (a) moving the file into the
+# target project's dir and (b) rewriting the embedded path.
+#
+# Usage: cm <id-or-title> <target-path> [--move]
+#        cm list [N|all]          List sessions, newest first (default: 10)
+#
+# Titles are the names you set with `/rename` — Claude Code stores them inline
+# in the JSONL as `{"type":"custom-title","customTitle":"…"}` entries (latest
+# wins). Untitled sessions show a first-user-message preview instead, and can
+# only be referenced by session-id prefix.
+#
+# Default is duplicate (safe: original is untouched). Pass --move to delete the
+# source after a successful copy.
+#
+# Source project is the current working directory.
+
+cm() {
+  local proj_root="$HOME/.claude/projects"
+
+  if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "cm — copy a Claude chat session into another project dir"
+    echo ""
+    echo "Usage: cm <id-or-title> <target-path> [--move]"
+    echo "       cm list [N|all]          List sessions, newest first (default: 10)"
+    return 0
+  fi
+
+  local src_path
+  src_path="$(pwd -P)"
+  local src_proj="$proj_root/${src_path//\//-}"
+
+  if [[ ! -d "$src_proj" ]]; then
+    echo "cm: no Claude project dir for $src_path"
+    return 1
+  fi
+
+  # Extract the latest custom-title for a session file (empty if none).
+  _cm_title() {
+    grep '"type":"custom-title"' "$1" 2>/dev/null | tail -1 \
+      | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p'
+  }
+
+  if [[ "$1" == "list" ]]; then
+    local limit="${2:-10}"
+    [[ "$limit" == "all" ]] && limit=0
+    local file title first_user label
+    # Sort by mtime, newest first; cap to $limit unless 0.
+    local -a files
+    if (( limit > 0 )); then
+      files=("$src_proj"/*.jsonl(Nom[1,$limit]))
+    else
+      files=("$src_proj"/*.jsonl(Nom))
+    fi
+    for file in "${files[@]}"; do
+      title="$(_cm_title "$file")"
+      if [[ -n "$title" ]]; then
+        label="$title"
+      else
+        first_user="$(grep -m1 '"type":"user"' "$file" 2>/dev/null \
+          | sed -n 's/.*"content":"\([^"]\{0,120\}\).*/\1/p')"
+        label="${first_user:-(no preview)}"
+      fi
+      printf '%s  %s\n' "$(basename "$file" .jsonl)" "$label"
+    done
+    return 0
+  fi
+
+  local query="$1"
+  local target="$2"
+  local move=0
+  for arg in "${@:3}"; do
+    [[ "$arg" == "--move" ]] && move=1
+  done
+
+  if [[ -z "$target" ]]; then
+    echo "Usage: cm <id-or-title> <target-path> [--move]"
+    return 1
+  fi
+
+  # Resolve target to absolute path. It must exist — we're not creating
+  # arbitrary project dirs.
+  if [[ ! -d "$target" ]]; then
+    echo "cm: target path does not exist: $target"
+    return 1
+  fi
+  target="$(cd "$target" && pwd -P)"
+  if [[ "$target" == "$src_path" ]]; then
+    echo "cm: source and target are the same path"
+    return 1
+  fi
+  local dst_proj="$proj_root/${target//\//-}"
+
+  # Match in three passes: session-id prefix, exact custom-title, then
+  # custom-title substring. Stop at the first pass that finds anything.
+  local -a candidates=()
+  local file title
+  for file in "$src_proj"/*.jsonl(N); do
+    [[ "$(basename "$file" .jsonl)" == "$query"* ]] && candidates+=("$file")
+  done
+  if [[ ${#candidates[@]} -eq 0 ]]; then
+    for file in "$src_proj"/*.jsonl(N); do
+      title="$(_cm_title "$file")"
+      [[ "$title" == "$query" ]] && candidates+=("$file")
+    done
+  fi
+  if [[ ${#candidates[@]} -eq 0 ]]; then
+    for file in "$src_proj"/*.jsonl(N); do
+      title="$(_cm_title "$file")"
+      [[ -n "$title" && "$title" == *"$query"* ]] && candidates+=("$file")
+    done
+  fi
+
+  if [[ ${#candidates[@]} -eq 0 ]]; then
+    echo "cm: no session matching '$query' in $src_proj"
+    return 1
+  elif [[ ${#candidates[@]} -gt 1 ]]; then
+    echo "cm: '$query' matches multiple sessions:"
+    for file in "${candidates[@]}"; do
+      echo "  $(basename "$file" .jsonl)"
+    done
+    echo "Narrow the query (e.g. pass the session id prefix)."
+    return 1
+  fi
+
+  local src_file="${candidates[1]}"
+  mkdir -p "$dst_proj"
+  local dst_file="$dst_proj/$(basename "$src_file")"
+
+  if [[ -e "$dst_file" ]]; then
+    echo "cm: $dst_file already exists — refusing to overwrite"
+    return 1
+  fi
+
+  # Rewrite embedded absolute paths. Use a delimiter unlikely to appear in
+  # paths, matching the approach in worktree/wt.
+  local d=$'\x01'
+  if ! sed "s${d}${src_path}${d}${target}${d}g" "$src_file" > "$dst_file"; then
+    rm -f "$dst_file"
+    echo "cm: failed to write $dst_file"
+    return 1
+  fi
+
+  if [[ $move -eq 1 ]]; then
+    rm -f "$src_file"
+    echo "Moved session to $dst_file"
+  else
+    echo "Copied session to $dst_file"
+  fi
+}
