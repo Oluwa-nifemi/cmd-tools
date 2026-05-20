@@ -388,23 +388,21 @@ restack_upstack() {
       warn "no saved old-tip for '$base' (gs commit wasn't used). Falling back to merge-base. If '$base' was rebased, the upstack rebase may include duplicate commits or hit unexpected conflicts."
     fi
 
-    # Skip if child is already up to date
-    local child_tip
-    child_tip="$(git rev-parse "$child" 2>/dev/null)"
-    local base_tip
-    base_tip="$(git rev-parse "$base" 2>/dev/null)"
-    if [[ "$fork_point" == "$base_tip" ]] || [[ "$child_tip" == "$base_tip" ]]; then
+    # Skip if child is already on top of base. Tip-equality alone misses the
+    # case where the child was just rebased (e.g. by restack_continue resuming
+    # from the parent) — its tip differs from base but base is in its ancestry.
+    if git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
       info "'$child' is already up to date with '$base'"
       restack_upstack "$child"
       continue
     fi
 
     # Save child's current tip before rebasing (its children will need this)
-    echo "$child_tip" > "$tips_dir/$(encode_branch "$child")"
+    git rev-parse "$child" > "$tips_dir/$(encode_branch "$child")"
 
     info "rebasing '$child' onto '$base'..."
 
-    if ! git rebase --onto "$base" "$fork_point" "$child" --quiet 2>/dev/null; then
+    if ! git rebase --onto "$base" "$fork_point" "$child" --quiet; then
       # Conflict detected — save state for --continue
       local state_file
       state_file="$(gs_dir)/restack_state"
