@@ -111,7 +111,36 @@ watch_run() {
   return $exit_code
 }
 
+CW_STATUS_TTL_SECS="${CW_STATUS_TTL_SECS:-1800}"  # 30 min
+
+prune_status() {
+  local now=$(date +%s)
+  local meta
+  for meta in "$CW_STATE_DIR"/cw-*.meta; do
+    [ -e "$meta" ] || continue
+    local STARTED="" ENDED="" PID="" STATUS=""
+    while IFS='=' read -r key val; do
+      case "$key" in
+        STARTED) STARTED="$val" ;;
+        ENDED) ENDED="$val" ;;
+        PID) PID="$val" ;;
+        STATUS) STATUS="$val" ;;
+      esac
+    done < "$meta"
+    local ref_time="${ENDED:-$STARTED}"
+    [ -n "$ref_time" ] || continue
+    # Skip live runs (still in `running` state with live pid) even if old
+    if [ "$STATUS" = "running" ] && kill -0 "$PID" 2>/dev/null; then
+      continue
+    fi
+    if [ $((now - ref_time)) -ge "$CW_STATUS_TTL_SECS" ]; then
+      rm -f "$meta"
+    fi
+  done
+}
+
 show_status() {
+  prune_status
   local files=("$CW_STATE_DIR"/cw-*.meta)
   if [ ! -e "${files[0]}" ]; then
     echo "No cw runs tracked."
@@ -179,8 +208,11 @@ main() {
   local positional=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      -l|--label) label="${2:-}"; shift 2 ;;
+      -l|--label)
+        [ $# -ge 2 ] || { echo "cw: --label requires a value" >&2; return 1; }
+        label="$2"; shift 2 ;;
       --label=*) label="${1#--label=}"; shift ;;
+      -l=*) label="${1#-l=}"; shift ;;
       --bg) bg=1; shift ;;
       --fg) bg=0; shift ;;
       --get) get=1; bg=0; shift ;;
