@@ -2,6 +2,24 @@
 
 # Completion for wt — git worktree manager.
 
+# Helper: output worktree names for the current repo.
+_wt_worktree_names() {
+  local wt_dir main_wt repo_name dir
+  wt_dir="${WT_WORKTREES_DIR:-}"
+  [[ -z "$wt_dir" ]] && return
+  main_wt="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2; exit }')"
+  [[ -z "$main_wt" ]] && return
+  repo_name="$(basename "$main_wt")"
+  dir="$wt_dir/$repo_name"
+  [[ -d "$dir" ]] || return
+  local -a names=()
+  local worktree_dir
+  for worktree_dir in "$dir"/*(/); do
+    names+=("${worktree_dir#$dir/}")
+  done
+  _describe -t worktrees 'worktree' names
+}
+
 local -a subcmds
 subcmds=(create c switch list rename clean push install help)
 
@@ -27,21 +45,3 @@ case "$state" in
     esac
     ;;
 esac
-
-# Helper: output worktree names for the current repo.
-_wt_worktree_names() {
-  local wt_dir main_wt repo_name dir
-  wt_dir="${WT_WORKTREES_DIR:-}"
-  [[ -z "$wt_dir" ]] && return
-  main_wt="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2; exit }')"
-  [[ -z "$main_wt" ]] && return
-  repo_name="$(basename "$main_wt")"
-  dir="$wt_dir/$repo_name"
-  [[ -d "$dir" ]] || return
-  local -a names=()
-  local d
-  for d in "$dir"/*(/); do
-    names+=("${d#$dir/}")
-  done
-  _describe -t worktrees 'worktree' names
-}
