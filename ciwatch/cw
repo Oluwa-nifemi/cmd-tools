@@ -30,6 +30,7 @@ Usage:
   cw <run-url-or-id> [--label <label>] [--fg]
   cw --status            List background and recent cw runs
   cw --clear-status      Clear the tracked run state
+  --get                  Print the matched run URL and copy it to clipboard
 
   <repo>    A CW_REPO_ALIASES key, owner/repo, or omitted (inferred from cwd)
   <action>  Case-insensitive substring of a workflow name
@@ -174,13 +175,15 @@ main() {
 
   local label=""
   local bg=1
+  local get=0
   local positional=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --label) label="${2:-}"; shift 2 ;;
+      -l|--label) label="${2:-}"; shift 2 ;;
       --label=*) label="${1#--label=}"; shift ;;
       --bg) bg=1; shift ;;
       --fg) bg=0; shift ;;
+      --get) get=1; bg=0; shift ;;
       *) positional+=("$1"); shift ;;
     esac
   done
@@ -307,6 +310,13 @@ main() {
   run_id=$(echo "$run_json" | jq -r '.[0].databaseId')
   run_url=$(echo "$run_json" | jq -r '.[0].url')
   run_title=$(echo "$run_json" | jq -r '.[0].displayTitle')
+
+  if [ "$get" -eq 1 ]; then
+    echo "$run_url" | pbcopy
+    echo "$run_url"
+    echo "(copied to clipboard)"
+    return 0
+  fi
 
   watch_run "$run_id" "$repo" "${label:-$workflow_name: $run_title}" "$run_url"
 }
