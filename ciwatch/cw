@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# cw — watch a GitHub Actions run by repo + workflow name
+#
+# Usage:
+#   cw [<repo>] <action> [-b <branch>] [--label <label>]
+#   cw <run-url-or-id> [--label <label>]
+#
+# Resolves the latest run of a workflow (matched by case-insensitive substring
+# of its name) on the given branch and tails it via `gh run watch`. Notifies
+# via terminal-notifier on completion.
+#
+# Configuration:
+#   CW_REPO_ALIASES   Space-separated "alias:owner/repo" pairs. Example:
+#                       export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
+#                     Used to expand the optional first argument.
+#
+# Repo resolution order:
+#   1. First arg matches a CW_REPO_ALIASES entry → use mapped owner/repo
+#   2. First arg looks like owner/repo → use as-is
+#   3. Otherwise infer from cwd via `gh repo view --json nameWithOwner`
+#
+# Requires: gh, jq, terminal-notifier (macOS)
+
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  cw [<repo>] <action> [-b <branch>] [--label <label>] [--fg]
+  cw <run-url-or-id> [--label <label>] [--fg]
+  cw --status            List background and recent cw runs
+  cw --clear-status      Clear the tracked run state
+
+  <repo>    A CW_REPO_ALIASES key, owner/repo, or omitted (inferred from cwd)
+  <action>  Case-insensitive substring of a workflow name
+  -b        Branch (defaults to current git branch)
+  --label   Label shown in the completion notification
+            (also accepts --label=<label>)
+  --fg      Watch in the foreground (default is to detach and log to
+            /tmp/cw-*.log). Notification fires on completion either way.
+
+Configure aliases via CW_REPO_ALIASES, e.g.:
+  export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
+EOF
+}
+
+resolve_alias() {
+  local key="$1"
+  local pair
+  for pair in ${CW_REPO_ALIASES:-}; do
+    if [[ "${pair%%:*}" == "$key" ]]; then
+      echo "${pair#*:}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+repo_from_cwd() {
+  gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+}
+
+CW_STATE_DIR="${CW_STATE_DIR:-/tmp/cw-state}"
+
+write_meta() {
+  local meta="$1"
+  shift
+
+  mkdir -p "$(dirname "$meta")"
+  {
+    for kv in "$@"; do
+      echo "$kv"
+    done
+  } > "$meta"
+}
+
+update_meta() {
+  local meta="$1"; shift
+  [ -f "$meta" ] || return 0
+  for kv in "$@"; do
+    local key="${kv%%=*}"
+    grep -v "^${key}=" "$meta" > "$meta.tmp" 2>/dev/null || true
+    echo "$kv" >> "$meta.tmp"
+    mv "$meta.tmp" "$meta"
+  done
+}
+
+watch_run() {
+  local run_id="$1" repo="$2" label="$3" url="$4"
+  local meta="$CW_STATE_DIR/cw-$$.meta"
+  write_meta "$meta" \
+    "PID=$$" \
+    "RUN_ID=$run_id" \
+    "REPO=$repo" \
+    "LABEL=$label" \
+    "URL=$url" \
+    "STARTED=$(date +%s)" \
+    "STATUS=running"
+  echo "Watching run $label ($run_id) in $repo..."
+  gh run watch "$run_id" -R "$repo" --exit-status 2>&1
+  local exit_code=$?
+  update_meta "$meta" "ENDED=$(date +%s)"
+  if [ $exit_code -eq 0 ]; then
+    update_meta "$meta" "STATUS=passed"
+    terminal-notifier -title "CI Passed ✅" -message "$label succeeded" -sound default -open "$url"
+  else
+    update_meta "$meta" "STATUS=failed"
+    terminal-notifier -title "CI Failed ❌" -message "$label failed" -sound Basso -open "$url"
+  fi
+  return $exit_code
+}
+
+show_status() {
+  local files=("$CW_STATE_DIR"/cw-*.meta)
+  if [ ! -e "${files[0]}" ]; then
+    echo "No cw runs tracked."
+    return 0
+  fi
+  printf "%-8s %-10s %-9s %-30s %s\n" "PID" "STATUS" "AGE" "LABEL" "URL"
+  local now=$(date +%s)
+  local meta
+  for meta in "${files[@]}"; do
+    local PID="" STATUS="" LABEL="" URL="" STARTED="" ENDED=""
+    while IFS='=' read -r key val; do
+      case "$key" in
+        PID) PID="$val" ;;
+        STATUS) STATUS="$val" ;;
+        LABEL) LABEL="$val" ;;
+        URL) URL="$val" ;;
+        STARTED) STARTED="$val" ;;
+        ENDED) ENDED="$val" ;;
+      esac
+    done < "$meta"
+    # Reconcile: marked running but pid gone → stale
+    if [ "$STATUS" = "running" ] && ! kill -0 "$PID" 2>/dev/null; then
+      STATUS="stale"
+    fi
+    local ref_time="${ENDED:-$now}"
+    local age=$((ref_time - STARTED))
+    local age_str
+    if [ "$age" -lt 60 ]; then age_str="${age}s"
+    elif [ "$age" -lt 3600 ]; then age_str="$((age/60))m"
+    else age_str="$((age/3600))h$(((age%3600)/60))m"; fi
+    local label_trunc="${LABEL:0:30}"
+    printf "%-8s %-10s %-9s %-30s %s\n" "$PID" "$STATUS" "$age_str" "$label_trunc" "$URL"
+  done
+}
+
+clear_status() {
+  rm -f "$CW_STATE_DIR"/cw-*.meta "$CW_STATE_DIR"/cw-*.meta.tmp 2>/dev/null
+  echo "Cleared cw status."
+}
+
+main() {
+  if [ $# -eq 0 ]; then
+    usage
+    return 1
+  fi
+
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    return 0
+  fi
+
+  if [[ "$1" == "--status" ]]; then
+    show_status
+    return 0
+  fi
+
+  if [[ "$1" == "--clear-status" ]]; then
+    clear_status
+    return 0
+  fi
+
+  local label=""
+  local bg=1
+  local positional=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --label) label="${2:-}"; shift 2 ;;
+      --label=*) label="${1#--label=}"; shift ;;
+      --bg) bg=1; shift ;;
+      --fg) bg=0; shift ;;
+      *) positional+=("$1"); shift ;;
+    esac
+  done
+  set -- "${positional[@]}"
+
+  if [ "$bg" -eq 1 ]; then
+    # Re-invoke self in foreground mode, detached.
+    set -- --fg "$@"
+    mkdir -p "$CW_STATE_DIR"
+    local log="$CW_STATE_DIR/cw-$$-$(date +%s).log"
+    local args=()
+    [ -n "$label" ] && args+=(--label "$label")
+    args+=("$@")
+    nohup "$0" "${args[@]}" >"$log" 2>&1 &
+    disown 2>/dev/null || true
+    echo "cw: backgrounded (pid $!), logging to $log"
+    return 0
+  fi
+
+  # Backward compat: full URL
+  if [[ "$1" == http* ]]; then
+    local url="$1"
+    local run_id repo
+    run_id=$(echo "$url" | sed -E 's|[?#].*||; s|/job/[0-9]+||' | grep -oE '[0-9]+$')
+    repo=$(echo "$url" | sed -E 's|https://github.com/([^/]+/[^/]+)/.*|\1|')
+    watch_run "$run_id" "$repo" "${label:-$run_id}" "$url"
+    return $?
+  fi
+
+  # Backward compat: bare numeric run id
+  if [[ "$1" =~ ^[0-9]+$ ]]; then
+    local run_id="$1" repo
+    repo=$(repo_from_cwd) || { echo "Cannot infer repo from cwd; pass a URL instead." >&2; return 1; }
+    [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a URL instead." >&2; return 1; }
+    local url="https://github.com/$repo/actions/runs/$run_id"
+    watch_run "$run_id" "$repo" "${label:-$run_id}" "$url"
+    return $?
+  fi
+
+  local repo="" action="" branch=""
+  local maybe_repo=""
+
+  if maybe_repo=$(resolve_alias "$1"); then
+    repo="$maybe_repo"
+    shift
+  elif [[ "$1" == */* ]]; then
+    repo="$1"
+    shift
+  fi
+
+  local action_parts=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -b|--branch) branch="${2:-}"; shift 2 ;;
+      -h|--help) usage; return 0 ;;
+      *) action_parts+=("$1"); shift ;;
+    esac
+  done
+
+  if [ ${#action_parts[@]} -eq 0 ]; then
+    echo "Missing <action>." >&2
+    usage
+    return 1
+  fi
+  action="${action_parts[*]}"
+
+  if [ -z "$repo" ]; then
+    repo=$(repo_from_cwd)
+    [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a repo alias or owner/repo." >&2; return 1; }
+  fi
+
+  if [ -z "$branch" ]; then
+    branch=$(git symbolic-ref --short HEAD 2>/dev/null) || true
+    [ -n "$branch" ] || { echo "Cannot infer branch; pass -b <branch>." >&2; return 1; }
+  fi
+
+  echo "Resolving workflow matching '$action' in $repo..."
+  local workflows
+  workflows=$(gh workflow list -R "$repo" --limit 200 --json name,id -q '.[] | "\(.id)\t\(.name)"') || return 1
+
+  local lc_action
+  lc_action=$(echo "$action" | tr '[:upper:]' '[:lower:]')
+
+  local matches
+  matches=$(echo "$workflows" | awk -F'\t' -v q="$lc_action" '
+    BEGIN { n = split(q, words, " ") }
+    {
+      name = tolower($2)
+      ok = 1
+      for (i = 1; i <= n; i++) {
+        if (index(name, words[i]) == 0) { ok = 0; break }
+      }
+      if (ok) print
+    }
+  ')
+  local match_count
+  match_count=$(echo -n "$matches" | grep -c '^' || true)
+
+  if [ "$match_count" -eq 0 ]; then
+    echo "No workflow in $repo matches '$action'." >&2
+    return 1
+  fi
+  if [ "$match_count" -gt 1 ]; then
+    echo "Multiple workflows match '$action' in $repo:" >&2
+    echo "$matches" | awk -F'\t' '{print "  - " $2}' >&2
+    return 1
+  fi
+
+  local workflow_id workflow_name
+  workflow_id=$(echo "$matches" | awk -F'\t' '{print $1}')
+  workflow_name=$(echo "$matches" | awk -F'\t' '{print $2}')
+
+  echo "Looking up latest run of '$workflow_name' on branch '$branch'..."
+  local run_json
+  run_json=$(gh run list -R "$repo" -w "$workflow_id" -b "$branch" -L 1 \
+    --json databaseId,status,url,displayTitle) || return 1
+
+  if [ "$run_json" = "[]" ] || [ -z "$run_json" ]; then
+    echo "No runs found for '$workflow_name' on branch '$branch' in $repo." >&2
+    return 1
+  fi
+
+  local run_id run_url run_title
+  run_id=$(echo "$run_json" | jq -r '.[0].databaseId')
+  run_url=$(echo "$run_json" | jq -r '.[0].url')
+  run_title=$(echo "$run_json" | jq -r '.[0].displayTitle')
+
+  watch_run "$run_id" "$repo" "${label:-$workflow_name: $run_title}" "$run_url"
+}
+
+main "$@"
