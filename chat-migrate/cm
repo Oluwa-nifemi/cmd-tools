@@ -516,7 +516,12 @@ PY
     # completed]" zombie state needing Ctrl-C to recover). Letting it
     # run as a child means the shell unblocks naturally on exit and the
     # prompt comes back.
+    #
+    # The `return` after the call is load-bearing: without `exec` to
+    # terminate the function, control would otherwise fall through into
+    # the copy-command path below and reinterpret args as a copy target.
     claude --resume "$session_id"
+    return $?
   fi
 
   # `cm delete <id-or-title>... [--force]` — destructive remove of one or
