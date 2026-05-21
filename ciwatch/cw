@@ -205,6 +205,7 @@ main() {
   local label=""
   local bg=1
   local get=0
+  local _direct_run_id="" _direct_run_url="" _direct_repo=""
   local positional=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -216,23 +217,29 @@ main() {
       --bg) bg=1; shift ;;
       --fg) bg=0; shift ;;
       --get) get=1; bg=0; shift ;;
+      # Internal flags used when bg mode re-invokes itself after resolution.
+      --run-id) _direct_run_id="$2"; shift 2 ;;
+      --run-url) _direct_run_url="$2"; shift 2 ;;
+      -R) _direct_repo="$2"; shift 2 ;;
       *) positional+=("$1"); shift ;;
     esac
   done
   set -- "${positional[@]}"
 
+  # Fast path: bg mode already resolved the run and is handing us the ids.
+  if [ -n "$_direct_run_id" ]; then
+    watch_run "$_direct_run_id" "$_direct_repo" "$label" "$_direct_run_url"
+    return $?
+  fi
+
+  # Background mode: resolve the run first so errors surface immediately, then
+  # fork. This way a bad workflow name or branch fails loud rather than silently
+  # logging to a file no one is watching.
   if [ "$bg" -eq 1 ]; then
-    # Re-invoke self in foreground mode, detached.
-    set -- --fg "$@"
-    mkdir -p "$CW_STATE_DIR"
-    local log="$CW_STATE_DIR/cw-$$-$(date +%s).log"
-    local args=()
-    [ -n "$label" ] && args+=(--label "$label")
-    args+=("$@")
-    nohup "$0" "${args[@]}" >"$log" 2>&1 &
-    disown 2>/dev/null || true
-    echo "cw: backgrounded (pid $!), logging to $log"
-    return 0
+    bg=0  # run the resolution logic below in-process
+    local _cw_bg_after_resolve=1
+  else
+    local _cw_bg_after_resolve=0
   fi
 
   # Backward compat: full URL
@@ -270,6 +277,8 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -b|--branch) branch="${2:-}"; shift 2 ;;
+      -b=*) branch="${1#-b=}"; shift ;;
+      --branch=*) branch="${1#--branch=}"; shift ;;
       -h|--help) usage; return 0 ;;
       *) action_parts+=("$1"); shift ;;
     esac
@@ -350,7 +359,20 @@ main() {
     return 0
   fi
 
-  watch_run "$run_id" "$repo" "${label:-$workflow_name: $run_title}" "$run_url"
+  local effective_label="${label:-$workflow_name: $run_title}"
+
+  if [ "$_cw_bg_after_resolve" -eq 1 ]; then
+    # Resolution succeeded — now it's safe to fork.
+    mkdir -p "$CW_STATE_DIR"
+    local log="$CW_STATE_DIR/cw-$$-$(date +%s).log"
+    nohup "$0" --fg -R "$repo" --run-id "$run_id" --label "$effective_label" --run-url "$run_url" \
+      >"$log" 2>&1 &
+    disown 2>/dev/null || true
+    echo "cw: backgrounded (pid $!), logging to $log"
+    return 0
+  fi
+
+  watch_run "$run_id" "$repo" "$effective_label" "$run_url"
 }
 
 main "$@"
