@@ -34,6 +34,11 @@
 #                                 Resume a session in the current project
 #                                 (incl. ACP sessions hidden from /resume).
 #                                 Tab-completes titles and session-ids.
+#        cm delete <id-or-title> [--force]
+#                                 Delete one session and its subagent dir
+#                                 from disk. Prompts for confirmation
+#                                 unless --force is given. Same matcher
+#                                 semantics as `cm continue`.
 #
 # <target> in any copy/move form accepts either:
 #   - a real path (existing dir), OR
@@ -80,6 +85,8 @@ cm() {
     echo "       cm continue <id-or-title>"
     echo "                                Resume a session via 'claude --resume'"
     echo "                                (incl. ACP sessions hidden from /resume picker)"
+    echo "       cm delete <id-or-title> [--force]"
+    echo "                                Delete one session + its subagent dir from disk"
     echo ""
     echo "<target> can be a path OR one of these aliases:"
     local key
@@ -267,6 +274,21 @@ cm() {
     # negligible for typical project dirs (a few hundred files at most).
     local -a files
     files=("$src_proj"/*.jsonl(Nom))
+
+    # Tabular output: header + 3 columns (ID prefix, AGE, TITLE).
+    #   - ID is shown as the 8-char prefix because (a) that's already
+    #     enough for prefix-matching against `cm continue`/`cm delete`,
+    #     and (b) full UUIDs were eating ~36 columns and pushing titles
+    #     past the right edge on narrow terminals.
+    #   - AGE column width is 4 ("99mo" fits, anything bigger is a year).
+    #   - Header is dimmed via ANSI SGR 2 so it sits visually behind the
+    #     data rows. Suppressed when stdout isn't a TTY (e.g. piped into
+    #     `wc -l` or grep) so the header doesn't pollute scripted use.
+    local fmt='%-8s  %-4s  %s\n'
+    if [[ -t 1 ]]; then
+      printf "\e[2m${fmt}\e[0m" 'ID' 'AGE' 'TITLE'
+    fi
+
     for file in "${files[@]}"; do
       # ACP/Zed sessions are tagged `"entrypoint":"sdk-ts"` on every assistant
       # message. -q exits at the first hit so large files stay cheap.
@@ -295,10 +317,8 @@ cm() {
         fi
       fi
       age="$(_cm_age "$file")"
-      # Columns: <uuid>  <age, right-aligned 4>  <label>. The age column
-      # stays narrow because `_cm_age` always picks the largest unit
-      # ("3w" not "21d"), so 4 chars covers up to "99mo".
-      printf '%s  %4s  %s\n' "$(basename "$file" .jsonl)" "$age" "$label"
+      local id_short="${${file:t:r}:0:8}"
+      printf "$fmt" "$id_short" "$age" "$label"
       (( shown++ ))
       if (( limit > 0 && shown >= limit )); then
         break
@@ -358,6 +378,54 @@ cm() {
     exec claude --resume "$session_id"
     # Only reached if `exec` itself failed (e.g. claude not on PATH).
     return 1
+  fi
+
+  # `cm delete <id-or-title> [--force]` — destructive remove of a single
+  # session. Default is interactive: prints what will be deleted and asks
+  # for a y/N confirmation. --force / -f skips the prompt for scripting.
+  # We deliberately do NOT support `cm delete all` or pattern-based bulk
+  # deletes — too easy to nuke real work. One session at a time.
+  if [[ "$1" == "delete" ]]; then
+    if [[ -z "$2" ]]; then
+      echo "Usage: cm delete <id-or-title> [--force]"
+      return 1
+    fi
+    local force=0 arg
+    for arg in "${@:3}"; do
+      [[ "$arg" == "--force" || "$arg" == "-f" ]] && force=1
+    done
+
+    local _cm_match
+    _cm_match_session "$2" || return 1
+    local session_id="${_cm_match:t:r}"
+    local title="$(_cm_title "$_cm_match")"
+    local sub_dir="$src_proj/$session_id"
+
+    echo "Will delete:"
+    echo "  id:    $session_id"
+    [[ -n "$title" ]] && echo "  title: $title"
+    echo "  file:  $_cm_match"
+    if [[ -d "$sub_dir" ]]; then
+      local sub_count
+      sub_count=$(find "$sub_dir" -name "*.jsonl" 2>/dev/null | wc -l | tr -d " ")
+      echo "  subagent dir: $sub_dir ($sub_count file(s))"
+    fi
+
+    if (( ! force )); then
+      # zsh-native `read -r "var?prompt"` syntax keeps the prompt on the
+      # same line as the input cursor. Empty / non-y answer aborts.
+      local reply
+      read -r "reply?Delete this session? [y/N] "
+      if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+        echo "aborted"
+        return 1
+      fi
+    fi
+
+    rm -f "$_cm_match" || { echo "cm: failed to remove $_cm_match"; return 1; }
+    [[ -d "$sub_dir" ]] && rm -rf "$sub_dir"
+    echo "deleted $session_id"
+    return 0
   fi
 
   # `cm all <target> [--move]` — bulk migrate every session in the current
@@ -551,6 +619,7 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
         cmds=(
           'list:list sessions in current project'
           'continue:resume a session (incl. Zed/ACP)'
+          'delete:delete a session from disk'
           'all:copy/move every session into <target>'
         )
         _describe 'command' cmds
@@ -558,7 +627,7 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
         ;;
       args)
         case $line[1] in
-          continue) _cm_complete_sessions ;;
+          continue|delete) _cm_complete_sessions ;;
           list)
             _values 'list option' \
               'any[drop ACP-only filter, keep count limit]' \
