@@ -1,12 +1,22 @@
 # cm — copy a Claude Code chat session into another project directory
 #
-# Claude Code stores per-project session JSONLs under
-#   ~/.claude/projects/<absolute-path-with-slashes-as-dashes>/<session-id>.jsonl
-# and embeds the absolute project path inside the JSONL. Copying a chat into a
-# different working directory therefore requires (a) moving the file into the
-# target project's dir and (b) rewriting the embedded path.
+# Claude Code stores per-project session data under
+#   ~/.claude/projects/<absolute-path-with-slashes-as-dashes>/
+#     <session-id>.jsonl                  — main session transcript
+#     <session-id>/subagents/agent-*.jsonl — subagent transcripts (when used)
+#     memory/                              — project-wide memory files
+# Each .jsonl embeds the absolute project path on every line, so moving a
+# chat into a different working directory means (a) physically moving the
+# files into the target project's dir, *and* (b) rewriting every embedded
+# path. Both the main file and the sibling subagent dir need the rewrite.
 #
-# Usage: cm <id-or-title> <target-path> [--move]
+# Usage: cm <id-or-title> <target> [--move]
+#                                 Copy/move one session into <target>.
+#        cm all <target> [--move]
+#                                 Copy/move EVERY session from the current
+#                                 project into <target>. Useful when you're
+#                                 physically relocating a project on disk
+#                                 and want its chat history to follow.
 #        cm list [N] [all]        List ACP/Zed sessions, newest first
 #                                 (default: 10). ACP-only by default because
 #                                 these are the sessions hidden from Claude
@@ -19,6 +29,13 @@
 #                                 Resume a session in the current project
 #                                 (incl. ACP sessions hidden from /resume).
 #                                 Tab-completes titles and session-ids.
+#
+# <target> in any copy/move form accepts either:
+#   - a real path (existing dir), OR
+#   - an alias from the personal table near the top of cm() — see the
+#     `_cm_aliases` assoc array. Aliases exist so the common "I want this
+#     chat in my api/front/python project" doesn't need a full path each
+#     time. Edit that table when projects move or new ones get added.
 #
 # Titles are the names you set with `/rename` — Claude Code stores them inline
 # in the JSONL as `{"type":"custom-title","customTitle":"…"}` entries (latest
@@ -33,14 +50,33 @@
 cm() {
   local proj_root="$HOME/.claude/projects"
 
+  # Personal path aliases for the <target> argument of any copy/move form.
+  # These are the projects you most often migrate chats between — edit this
+  # table when projects move on disk or new ones get added. Keys are matched
+  # exactly; anything not in the table is treated as a literal path so the
+  # general form still works.
+  local -A _cm_aliases=(
+    api    "$HOME/Documents/work/ardoq-api"
+    front  "$HOME/Documents/work/ardoq-packages"
+    python "$HOME/Desktop/devops-monorepo"
+  )
+
   if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
     echo "cm — copy a Claude chat session into another project dir"
     echo ""
-    echo "Usage: cm <id-or-title> <target-path> [--move]"
+    echo "Usage: cm <id-or-title> <target> [--move]"
+    echo "       cm all <target> [--move]"
+    echo "                                Move/copy every chat from cwd into <target>"
     echo "       cm list [N] [all]        List ACP/Zed sessions, newest first (default: 10)"
     echo "                                Pass 'all' to show every session, unlimited"
     echo "       cm continue <id-or-title>"
     echo "                                Resume a session via 'claude --resume'"
+    echo ""
+    echo "<target> can be a path OR one of these aliases:"
+    local key
+    for key in "${(@k)_cm_aliases}"; do
+      printf "  %-8s → %s\n" "$key" "${_cm_aliases[$key]}"
+    done
     return 0
   fi
 
@@ -93,6 +129,74 @@ cm() {
     elif (( diff < 31536000 )); then print -r -- "$(( diff / 2592000 ))mo"
     else                             print -r -- "$(( diff / 31536000 ))y"
     fi
+  }
+
+  # Resolve a <target> argument to an absolute path. Returns the alias
+  # expansion if it matches; otherwise returns the input unchanged. Empty
+  # input returns empty so callers can detect "missing arg" themselves.
+  _cm_resolve_target() {
+    local input="$1"
+    if [[ -n "${_cm_aliases[$input]}" ]]; then
+      print -r -- "${_cm_aliases[$input]}"
+    else
+      print -r -- "$input"
+    fi
+  }
+
+  # Migrate one session (.jsonl + matching <session-id>/ subdir if it
+  # exists) from $src_proj to $dst_proj, rewriting every embedded path
+  # from $src_path to $target. Sets $_cm_migrate_skipped / $_cm_migrate_ok
+  # so the caller can tally results. Returns 0 on success, 1 on skip
+  # (target file already exists), 2 on error.
+  #
+  # Why the subdir matters: Claude Code's subagent transcripts live at
+  # <proj>/<session-id>/subagents/agent-*.jsonl and they also embed the
+  # absolute cwd path on every line. If we move only the top-level .jsonl
+  # those transcripts get orphaned (and would point at the wrong project
+  # path if Claude ever picks them up again). So we move both.
+  _cm_migrate_session() {
+    local src_file="$1" move="$2"
+    local id="${src_file:t:r}"
+    local dst_file="$dst_proj/${src_file:t}"
+    local d=$'\x01'
+    _cm_migrate_ok=0
+    _cm_migrate_skipped=0
+
+    if [[ -e "$dst_file" ]]; then
+      _cm_migrate_skipped=1
+      return 1
+    fi
+
+    if ! sed "s${d}${src_path}${d}${target}${d}g" "$src_file" > "$dst_file"; then
+      rm -f "$dst_file"
+      return 2
+    fi
+
+    # Subagent subdir — best-effort. If it exists, rewrite each nested
+    # .jsonl through sed into the mirrored location. We don't fail the
+    # whole migration if a single subagent file errors out; that would
+    # leave the main session half-moved.
+    local sub_src="$src_proj/$id"
+    if [[ -d "$sub_src" ]]; then
+      local sub_dst="$dst_proj/$id"
+      local nested rel nested_dst
+      mkdir -p "$sub_dst"
+      for nested in "$sub_src"/**/*.jsonl(N); do
+        rel="${nested#$sub_src/}"
+        nested_dst="$sub_dst/$rel"
+        mkdir -p "${nested_dst:h}"
+        sed "s${d}${src_path}${d}${target}${d}g" "$nested" > "$nested_dst" || true
+      done
+      if (( move )); then
+        rm -rf "$sub_src"
+      fi
+    fi
+
+    if (( move )); then
+      rm -f "$src_file"
+    fi
+    _cm_migrate_ok=1
+    return 0
   }
 
   # True when a session is "noise" — an automated one-shot SDK run rather
@@ -236,6 +340,67 @@ cm() {
     return 1
   fi
 
+  # `cm all <target> [--move]` — bulk migrate every session in the current
+  # project dir. Use case: you're moving a project on disk and want its
+  # full chat history to follow. Defaults to copy (safe); --move deletes
+  # the source after a successful migration. The project-wide `memory/`
+  # dir (if present) is treated as a single unit and moved alongside.
+  if [[ "$1" == "all" ]]; then
+    local target="$2"
+    local move=0
+    local arg
+    for arg in "${@:3}"; do
+      [[ "$arg" == "--move" ]] && move=1
+    done
+
+    if [[ -z "$target" ]]; then
+      echo "Usage: cm all <target-or-alias> [--move]"
+      return 1
+    fi
+    target="$(_cm_resolve_target "$target")"
+    if [[ ! -d "$target" ]]; then
+      echo "cm: target path does not exist: $target"
+      return 1
+    fi
+    target="$(cd "$target" && pwd -P)"
+    if [[ "$target" == "$src_path" ]]; then
+      echo "cm: source and target are the same path"
+      return 1
+    fi
+    local dst_proj="$proj_root/${target//\//-}"
+    mkdir -p "$dst_proj"
+
+    local copied=0 skipped=0 failed=0
+    local src_file _cm_migrate_ok _cm_migrate_skipped rc
+    for src_file in "$src_proj"/*.jsonl(N); do
+      _cm_migrate_session "$src_file" "$move"
+      rc=$?
+      case $rc in
+        0) copied=$(( copied + 1 )) ;;
+        1) skipped=$(( skipped + 1 )) ;;
+        *) failed=$(( failed + 1 )); echo "cm: failed to migrate ${src_file:t}" ;;
+      esac
+    done
+
+    # Project-wide memory dir — not session-specific. Move/copy as a
+    # single unit if it exists. No path rewriting needed because memory
+    # files are plain markdown without embedded absolute paths.
+    if [[ -d "$src_proj/memory" ]]; then
+      if [[ -d "$dst_proj/memory" ]]; then
+        echo "cm: $dst_proj/memory already exists — leaving source memory dir intact"
+      else
+        cp -R "$src_proj/memory" "$dst_proj/memory" \
+          && { (( move )) && rm -rf "$src_proj/memory"; }
+      fi
+    fi
+
+    local verb; (( move )) && verb="Moved" || verb="Copied"
+    echo "$verb $copied session(s) → $dst_proj"
+    (( skipped > 0 )) && echo "Skipped $skipped (already existed in target)"
+    (( failed > 0 ))  && echo "Failed $failed"
+    return 0
+  fi
+
   local query="$1"
   local target="$2"
   local move=0
@@ -244,12 +409,14 @@ cm() {
   done
 
   if [[ -z "$target" ]]; then
-    echo "Usage: cm <id-or-title> <target-path> [--move]"
+    echo "Usage: cm <id-or-title> <target-or-alias> [--move]"
     return 1
   fi
 
-  # Resolve target to absolute path. It must exist — we're not creating
-  # arbitrary project dirs.
+  # Resolve target via alias table first, then verify it's an existing
+  # directory. We never create project dirs out of thin air — `<target>`
+  # must already exist on disk.
+  target="$(_cm_resolve_target "$target")"
   if [[ ! -d "$target" ]]; then
     echo "cm: target path does not exist: $target"
     return 1
@@ -265,28 +432,20 @@ cm() {
   _cm_match_session "$query" || return 1
   local src_file="$_cm_match"
   mkdir -p "$dst_proj"
-  local dst_file="$dst_proj/$(basename "$src_file")"
 
-  if [[ -e "$dst_file" ]]; then
-    echo "cm: $dst_file already exists — refusing to overwrite"
+  local _cm_migrate_ok _cm_migrate_skipped
+  _cm_migrate_session "$src_file" "$move"
+  local rc=$?
+  if (( rc == 1 )); then
+    echo "cm: $dst_proj/${src_file:t} already exists — refusing to overwrite"
+    return 1
+  elif (( rc != 0 )); then
+    echo "cm: failed to migrate ${src_file:t}"
     return 1
   fi
 
-  # Rewrite embedded absolute paths. Use a delimiter unlikely to appear in
-  # paths, matching the approach in worktree/wt.
-  local d=$'\x01'
-  if ! sed "s${d}${src_path}${d}${target}${d}g" "$src_file" > "$dst_file"; then
-    rm -f "$dst_file"
-    echo "cm: failed to write $dst_file"
-    return 1
-  fi
-
-  if [[ $move -eq 1 ]]; then
-    rm -f "$src_file"
-    echo "Moved session to $dst_file"
-  else
-    echo "Copied session to $dst_file"
-  fi
+  local verb; (( move )) && verb="Moved" || verb="Copied"
+  echo "$verb session → $dst_proj/${src_file:t}"
 }
 
 # zsh completion. Only registers when running under zsh and the completion
@@ -356,12 +515,23 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
       '1: :->cmd' \
       '*::: :->args' && return 0
 
+    # Alias keywords — KEEP IN SYNC with the `_cm_aliases` table inside
+    # cm(). Completion lives outside the cm() function scope, so the table
+    # isn't reachable from here; values mirrored as plain descriptions.
+    _cm_alias_targets() {
+      _values 'target alias' \
+        'api[~/Documents/work/ardoq-api]' \
+        'front[~/Documents/work/ardoq-packages]' \
+        'python[~/Desktop/devops-monorepo]'
+    }
+
     case $state in
       cmd)
         local -a cmds
         cmds=(
           'list:list sessions in current project'
           'continue:resume a session (incl. Zed/ACP)'
+          'all:copy/move every session into <target>'
         )
         _describe 'command' cmds
         _cm_complete_sessions
@@ -370,7 +540,21 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
         case $line[1] in
           continue) _cm_complete_sessions ;;
           list)     _values 'list option' 'all[show every session, unlimited]' ;;
-          *) ;;
+          all)
+            # `cm all <target>` — second word is the target. Offer aliases
+            # alongside path completion.
+            if (( CURRENT == 2 )); then
+              _cm_alias_targets
+              _path_files -/
+            fi
+            ;;
+          *)
+            # `cm <id-or-title> <target>` — second word is the target.
+            if (( CURRENT == 2 )); then
+              _cm_alias_targets
+              _path_files -/
+            fi
+            ;;
         esac
         ;;
     esac
