@@ -509,9 +509,14 @@ PY
     # `claude --resume <id>` bypasses the picker, so SDK-entrypoint sessions
     # (Zed/ACP) resume even though /resume hides them. cwd is already the
     # session's project, since we matched against $src_proj.
-    exec claude --resume "$session_id"
-    # Only reached if `exec` itself failed (e.g. claude not on PATH).
-    return 1
+    #
+    # We deliberately DO NOT use `exec` here. `exec` would replace the
+    # shell process with claude, so when claude exits there's no shell
+    # left and the terminal closes the pane (or sits in a "[Process
+    # completed]" zombie state needing Ctrl-C to recover). Letting it
+    # run as a child means the shell unblocks naturally on exit and the
+    # prompt comes back.
+    claude --resume "$session_id"
   fi
 
   # `cm delete <id-or-title>... [--force]` — destructive remove of one or
