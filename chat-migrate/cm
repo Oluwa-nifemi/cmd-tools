@@ -34,10 +34,14 @@
 #                                 Resume a session in the current project
 #                                 (incl. ACP sessions hidden from /resume).
 #                                 Tab-completes titles and session-ids.
-#        cm delete <id-or-title> [--force]
-#                                 Delete one session and its subagent dir
-#                                 from disk. Prompts for confirmation
-#                                 unless --force is given. Same matcher
+#        cm delete <id-or-title>... [--force]
+#                                 Delete one or more sessions and their
+#                                 subagent dirs from disk. Prompts once
+#                                 for the whole batch unless --force is
+#                                 given. If any query fails to resolve
+#                                 (no match / ambiguous), the whole
+#                                 batch aborts before anything is
+#                                 deleted. Same per-query matcher
 #                                 semantics as `cm continue`.
 #
 # <target> in any copy/move form accepts either:
@@ -85,8 +89,8 @@ cm() {
     echo "       cm continue <id-or-title>"
     echo "                                Resume a session via 'claude --resume'"
     echo "                                (incl. ACP sessions hidden from /resume picker)"
-    echo "       cm delete <id-or-title> [--force]"
-    echo "                                Delete one session + its subagent dir from disk"
+    echo "       cm delete <id-or-title>... [--force]"
+    echo "                                Delete one or more sessions + subagent dirs"
     echo ""
     echo "<target> can be a path OR one of these aliases:"
     local key
@@ -457,55 +461,114 @@ PY
     return 1
   fi
 
-  # `cm delete <id-or-title> [--force]` — destructive remove of a single
-  # session. Default is interactive: prints what will be deleted and asks
-  # for a y/N confirmation. --force / -f skips the prompt for scripting.
-  # We deliberately do NOT support `cm delete all` or pattern-based bulk
-  # deletes — too easy to nuke real work. One session at a time.
+  # `cm delete <id-or-title>... [--force]` — destructive remove of one or
+  # more sessions. Default is interactive: prints what will be deleted
+  # (including last 3 conversational turns per session) and asks a single
+  # y/N for the whole batch. --force / -f skips the prompt.
+  #
+  # All queries are resolved up-front via `_cm_match_session`. If ANY of
+  # them fail to resolve (no match / ambiguous), nothing is deleted —
+  # bulk operations on a half-resolved set are too easy to misuse.
+  # Duplicate matches across queries are deduped so passing the same id
+  # twice doesn't double-delete or weirdly fail on the second pass.
+  #
+  # We deliberately do NOT support `cm delete all` or glob patterns —
+  # nuking everything matching a wildcard is exactly the class of
+  # mistake that motivated the per-session confirmation in the first
+  # place.
   if [[ "$1" == "delete" ]]; then
     if [[ -z "$2" ]]; then
-      echo "Usage: cm delete <id-or-title> [--force]"
+      echo "Usage: cm delete <id-or-title>... [--force]"
       return 1
     fi
+
     local force=0 arg
-    for arg in "${@:3}"; do
-      [[ "$arg" == "--force" || "$arg" == "-f" ]] && force=1
+    local -a queries=()
+    # Split args into flags vs queries. Treat anything starting with `-`
+    # as a flag; unknown flags fall through to the default error path.
+    for arg in "${@:2}"; do
+      case "$arg" in
+        --force|-f) force=1 ;;
+        -*)
+          echo "cm: unknown flag '$arg' (delete accepts --force/-f)"
+          return 1
+          ;;
+        *)          queries+=("$arg") ;;
+      esac
     done
 
-    local _cm_match
-    _cm_match_session "$2" || return 1
-    local session_id="${_cm_match:t:r}"
-    local title="$(_cm_title "$_cm_match")"
-    local sub_dir="$src_proj/$session_id"
-
-    echo "Will delete:"
-    echo "  id:    $session_id"
-    [[ -n "$title" ]] && echo "  title: $title"
-    echo "  file:  $_cm_match"
-    if [[ -d "$sub_dir" ]]; then
-      local sub_count
-      sub_count=$(find "$sub_dir" -name "*.jsonl" 2>/dev/null | wc -l | tr -d " ")
-      echo "  subagent dir: $sub_dir ($sub_count file(s))"
+    if (( ${#queries[@]} == 0 )); then
+      echo "Usage: cm delete <id-or-title>... [--force]"
+      return 1
     fi
-    # Last few conversational turns so the user can sanity-check before
-    # confirming. Each line truncated; tool calls shown as `<ToolName>`.
-    echo "  last 3 messages:"
-    _cm_tail_messages "$_cm_match" 3
+
+    # Resolve every query first; abort on any failure before deleting
+    # anything. Dedupe by absolute file path so passing the same target
+    # twice is harmless.
+    local -a targets=()  # absolute paths to .jsonl files
+    local q _cm_match seen
+    for q in "${queries[@]}"; do
+      _cm_match_session "$q" || return 1
+      seen=0
+      for arg in "${targets[@]}"; do
+        [[ "$arg" == "$_cm_match" ]] && { seen=1; break; }
+      done
+      (( seen )) || targets+=("$_cm_match")
+    done
+
+    local plural
+    (( ${#targets[@]} == 1 )) && plural="session" || plural="sessions"
+    echo "Will delete ${#targets[@]} $plural:"
+    local file id title sub_dir sub_count idx=0
+    for file in "${targets[@]}"; do
+      idx=$(( idx + 1 ))
+      id="${file:t:r}"
+      title="$(_cm_title "$file")"
+      sub_dir="$src_proj/$id"
+      echo ""
+      echo "  [$idx] $id"
+      [[ -n "$title" ]] && echo "       title: $title"
+      if [[ -d "$sub_dir" ]]; then
+        sub_count=$(find "$sub_dir" -name "*.jsonl" 2>/dev/null | wc -l | tr -d " ")
+        echo "       subagent dir: $sub_count file(s)"
+      fi
+      echo "       last 3 messages:"
+      _cm_tail_messages "$file" 3 | sed 's/^  /       /'
+    done
+    echo ""
 
     if (( ! force )); then
-      # zsh-native `read -r "var?prompt"` syntax keeps the prompt on the
-      # same line as the input cursor. Empty / non-y answer aborts.
-      local reply
-      read -r "reply?Delete this session? [y/N] "
+      local reply prompt
+      if (( ${#targets[@]} == 1 )); then
+        prompt="Delete this session? [y/N] "
+      else
+        prompt="Delete all ${#targets[@]} sessions? [y/N] "
+      fi
+      read -r "reply?$prompt"
       if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
         echo "aborted"
         return 1
       fi
     fi
 
-    rm -f "$_cm_match" || { echo "cm: failed to remove $_cm_match"; return 1; }
-    [[ -d "$sub_dir" ]] && rm -rf "$sub_dir"
-    echo "deleted $session_id"
+    # Perform deletes. Track failures so the user sees a summary even if
+    # one rm fails partway through (e.g. permission glitch on a single
+    # subagent dir).
+    local deleted=0 failed=0
+    for file in "${targets[@]}"; do
+      id="${file:t:r}"
+      sub_dir="$src_proj/$id"
+      if ! rm -f "$file"; then
+        echo "cm: failed to remove $file"
+        failed=$(( failed + 1 ))
+        continue
+      fi
+      [[ -d "$sub_dir" ]] && rm -rf "$sub_dir"
+      deleted=$(( deleted + 1 ))
+    done
+    (( deleted == 1 )) && plural="session" || plural="sessions"
+    echo "deleted $deleted $plural"
+    (( failed > 0 )) && echo "failed $failed"
     return 0
   fi
 
