@@ -7,7 +7,15 @@
 # target project's dir and (b) rewriting the embedded path.
 #
 # Usage: cm <id-or-title> <target-path> [--move]
-#        cm list [N|all]          List sessions, newest first (default: 10)
+#        cm list [N|all] [acp]    List sessions, newest first (default: 10)
+#                                 Pass `acp` to show only Zed/ACP sessions
+#                                 (entrypoint=sdk-ts) — these are hidden by
+#                                 Claude Code's `/resume` picker but resumable
+#                                 via `claude --resume <session-id>`.
+#        cm continue <id-or-title>
+#                                 Resume a session in the current project
+#                                 (incl. ACP sessions hidden from /resume).
+#                                 Tab-completes titles and session-ids.
 #
 # Titles are the names you set with `/rename` — Claude Code stores them inline
 # in the JSONL as `{"type":"custom-title","customTitle":"…"}` entries (latest
@@ -26,7 +34,10 @@ cm() {
     echo "cm — copy a Claude chat session into another project dir"
     echo ""
     echo "Usage: cm <id-or-title> <target-path> [--move]"
-    echo "       cm list [N|all]          List sessions, newest first (default: 10)"
+    echo "       cm list [N|all] [acp]    List sessions, newest first (default: 10)"
+    echo "                                Pass 'acp' to filter to Zed/ACP sessions only"
+    echo "       cm continue <id-or-title>"
+    echo "                                Resume a session via 'claude --resume'"
     return 0
   fi
 
@@ -45,18 +56,58 @@ cm() {
       | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p'
   }
 
+  # True when a session is "noise" — an automated one-shot SDK run rather
+  # than a real conversation. These clutter `cm list` and tab-completion,
+  # so we hide them. Detection is by the FIRST user-message content, which
+  # is stable per category:
+  #
+  #   slug-gen        — stop-hook calls into the SDK to mint a kebab-case
+  #                     rename. Prompt always starts with the literal
+  #                     "Generate a kebab-case slug".
+  #   local-command   — sessions spawned by Claude Code local slash commands
+  #                     (e.g. /loop, /watch-build). The harness wraps the
+  #                     user input in `<local-command-caveat>` so the model
+  #                     knows it's not direct user input.
+  #
+  # If you add more noise sources, extend the alternation below and add a
+  # comment explaining what triggers that prompt shape.
+  _cm_is_noise() {
+    grep -m1 '"type":"user"' "$1" 2>/dev/null | grep -qE \
+      '"content":"(Generate a kebab-case slug|<local-command-caveat>)'
+  }
+
   if [[ "$1" == "list" ]]; then
-    local limit="${2:-10}"
-    [[ "$limit" == "all" ]] && limit=0
-    local file title first_user label
-    # Sort by mtime, newest first; cap to $limit unless 0.
+    # Parse list args: numeric/"all" = limit, "acp" = filter to Zed sessions.
+    # Order-independent so both `cm list acp 5` and `cm list 5 acp` work.
+    local limit=10
+    local filter_acp=0
+    local arg
+    for arg in "${@:2}"; do
+      case "$arg" in
+        acp)  filter_acp=1 ;;
+        all)  limit=0 ;;
+        *)    limit="$arg" ;;
+      esac
+    done
+
+    local file title first_user label shown=0
+    # Always iterate the full mtime-sorted file list and stop after `limit`
+    # *displayed* matches. We can't pre-slice the glob to `limit` items: the
+    # noise filter (slug-gen, local-command) and the optional ACP filter
+    # both reject files post-glob, so a pre-slice would silently show fewer
+    # than `limit` entries when any rejection happens. Iteration cost is
+    # negligible for typical project dirs (a few hundred files at most).
     local -a files
-    if (( limit > 0 )); then
-      files=("$src_proj"/*.jsonl(Nom[1,$limit]))
-    else
-      files=("$src_proj"/*.jsonl(Nom))
-    fi
+    files=("$src_proj"/*.jsonl(Nom))
     for file in "${files[@]}"; do
+      # ACP/Zed sessions are tagged `"entrypoint":"sdk-ts"` on every assistant
+      # message. -q exits at the first hit so large files stay cheap.
+      if (( filter_acp )) && ! grep -q '"entrypoint":"sdk-ts"' "$file"; then
+        continue
+      fi
+      # Hide automated/noise sessions (slug-gen hooks, local-command
+      # wrappers) — see `_cm_is_noise` for the full taxonomy.
+      _cm_is_noise "$file" && continue
       title="$(_cm_title "$file")"
       if [[ -n "$title" ]]; then
         label="$title"
@@ -66,8 +117,65 @@ cm() {
         label="${first_user:-(no preview)}"
       fi
       printf '%s  %s\n' "$(basename "$file" .jsonl)" "$label"
+      (( shown++ ))
+      if (( limit > 0 && shown >= limit )); then
+        break
+      fi
     done
     return 0
+  fi
+
+  # Resolve a query (id-prefix, exact title, or substring title) to a single
+  # session file. Sets the global-to-the-function `_cm_match` on success.
+  # Returns nonzero on no-match or ambiguous match (printing diagnostics).
+  _cm_match_session() {
+    local q="$1" file title
+    _cm_match=""
+    local -a hits=()
+    for file in "$src_proj"/*.jsonl(N); do
+      [[ "$(basename "$file" .jsonl)" == "$q"* ]] && hits+=("$file")
+    done
+    if [[ ${#hits[@]} -eq 0 ]]; then
+      for file in "$src_proj"/*.jsonl(N); do
+        title="$(_cm_title "$file")"
+        [[ "$title" == "$q" ]] && hits+=("$file")
+      done
+    fi
+    if [[ ${#hits[@]} -eq 0 ]]; then
+      for file in "$src_proj"/*.jsonl(N); do
+        title="$(_cm_title "$file")"
+        [[ -n "$title" && "$title" == *"$q"* ]] && hits+=("$file")
+      done
+    fi
+    if [[ ${#hits[@]} -eq 0 ]]; then
+      echo "cm: no session matching '$q' in $src_proj"
+      return 1
+    elif [[ ${#hits[@]} -gt 1 ]]; then
+      echo "cm: '$q' matches multiple sessions:"
+      for file in "${hits[@]}"; do
+        echo "  $(basename "$file" .jsonl)"
+      done
+      echo "Narrow the query (e.g. pass the session id prefix)."
+      return 1
+    fi
+    _cm_match="${hits[1]}"
+    return 0
+  }
+
+  if [[ "$1" == "continue" ]]; then
+    if [[ -z "$2" ]]; then
+      echo "Usage: cm continue <id-or-title>"
+      return 1
+    fi
+    local _cm_match
+    _cm_match_session "$2" || return 1
+    local session_id="$(basename "$_cm_match" .jsonl)"
+    # `claude --resume <id>` bypasses the picker, so SDK-entrypoint sessions
+    # (Zed/ACP) resume even though /resume hides them. cwd is already the
+    # session's project, since we matched against $src_proj.
+    exec claude --resume "$session_id"
+    # Only reached if `exec` itself failed (e.g. claude not on PATH).
+    return 1
   fi
 
   local query="$1"
@@ -95,39 +203,9 @@ cm() {
   fi
   local dst_proj="$proj_root/${target//\//-}"
 
-  # Match in three passes: session-id prefix, exact custom-title, then
-  # custom-title substring. Stop at the first pass that finds anything.
-  local -a candidates=()
-  local file title
-  for file in "$src_proj"/*.jsonl(N); do
-    [[ "$(basename "$file" .jsonl)" == "$query"* ]] && candidates+=("$file")
-  done
-  if [[ ${#candidates[@]} -eq 0 ]]; then
-    for file in "$src_proj"/*.jsonl(N); do
-      title="$(_cm_title "$file")"
-      [[ "$title" == "$query" ]] && candidates+=("$file")
-    done
-  fi
-  if [[ ${#candidates[@]} -eq 0 ]]; then
-    for file in "$src_proj"/*.jsonl(N); do
-      title="$(_cm_title "$file")"
-      [[ -n "$title" && "$title" == *"$query"* ]] && candidates+=("$file")
-    done
-  fi
-
-  if [[ ${#candidates[@]} -eq 0 ]]; then
-    echo "cm: no session matching '$query' in $src_proj"
-    return 1
-  elif [[ ${#candidates[@]} -gt 1 ]]; then
-    echo "cm: '$query' matches multiple sessions:"
-    for file in "${candidates[@]}"; do
-      echo "  $(basename "$file" .jsonl)"
-    done
-    echo "Narrow the query (e.g. pass the session id prefix)."
-    return 1
-  fi
-
-  local src_file="${candidates[1]}"
+  local _cm_match
+  _cm_match_session "$query" || return 1
+  local src_file="$_cm_match"
   mkdir -p "$dst_proj"
   local dst_file="$dst_proj/$(basename "$src_file")"
 
@@ -152,3 +230,64 @@ cm() {
     echo "Copied session to $dst_file"
   fi
 }
+
+# zsh completion. Only registers when running under zsh and the completion
+# system is loaded (compdef present). For `cm continue`, completes session
+# titles (preferred) and session-ids from the current project dir, newest
+# first. For `cm <id-or-title>` (the copy form) it offers the same.
+if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
+  _cm() {
+    local proj_root="$HOME/.claude/projects"
+    local src_proj="$proj_root/${PWD//\//-}"
+
+    _cm_complete_sessions() {
+      [[ -d "$src_proj" ]] || return
+      local -a ids titles
+      local file id title
+      # Sort by mtime, newest first, so completion shows recent sessions first.
+      for file in "$src_proj"/*.jsonl(Nom); do
+        # Skip noise (slug-gen, local-command wrappers). We can't call the
+        # in-`cm` helper from here — `_cm_is_noise` is scoped to `cm()` —
+        # so the pattern is inlined. Keep it in sync with `_cm_is_noise`.
+        grep -m1 '"type":"user"' "$file" 2>/dev/null | grep -qE \
+          '"content":"(Generate a kebab-case slug|<local-command-caveat>)' \
+          && continue
+        id="${file:t:r}"
+        title="$(grep '"type":"custom-title"' "$file" 2>/dev/null | tail -1 \
+          | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p')"
+        if [[ -n "$title" ]]; then
+          # Use title:description form so `_describe` shows id alongside.
+          titles+=("${title}:${id:0:8}")
+        fi
+        ids+=("${id}:${title:-(untitled)}")
+      done
+      _describe -t titles 'session title' titles
+      _describe -t ids 'session id' ids
+    }
+
+    local context state line
+    _arguments -C \
+      '1: :->cmd' \
+      '*::: :->args' && return 0
+
+    case $state in
+      cmd)
+        local -a cmds
+        cmds=(
+          'list:list sessions in current project'
+          'continue:resume a session (incl. Zed/ACP)'
+        )
+        _describe 'command' cmds
+        _cm_complete_sessions
+        ;;
+      args)
+        case $line[1] in
+          continue) _cm_complete_sessions ;;
+          list)     _values 'list option' 'acp[Zed/ACP only]' 'all[no limit]' ;;
+          *) ;;
+        esac
+        ;;
+    esac
+  }
+  compdef _cm cm
+fi
