@@ -275,18 +275,23 @@ cm() {
     local -a files
     files=("$src_proj"/*.jsonl(Nom))
 
-    # Tabular output: header + 3 columns (ID prefix, AGE, TITLE).
-    #   - ID is shown as the 8-char prefix because (a) that's already
-    #     enough for prefix-matching against `cm continue`/`cm delete`,
-    #     and (b) full UUIDs were eating ~36 columns and pushing titles
-    #     past the right edge on narrow terminals.
+    # Tabular output: header + 3 columns (TITLE, ID prefix, AGE).
+    # Order is TITLE first because that's what the eye looks for; ID and
+    # AGE are reference data, parked on the right.
+    #   - TITLE is padded to TITLE_WIDTH (50) for a clean column. Long
+    #     labels truncate with a single-char ellipsis. Most kebab-case
+    #     titles sit comfortably under 40 chars; the first-prompt
+    #     fallback previews are the ones that get clipped here.
+    #   - ID shows the 8-char UUID prefix — enough to feed back into
+    #     `cm continue` / `cm delete` via the prefix matcher.
     #   - AGE column width is 4 ("99mo" fits, anything bigger is a year).
     #   - Header is dimmed via ANSI SGR 2 so it sits visually behind the
     #     data rows. Suppressed when stdout isn't a TTY (e.g. piped into
     #     `wc -l` or grep) so the header doesn't pollute scripted use.
-    local fmt='%-8s  %-4s  %s\n'
+    local TITLE_WIDTH=50
+    local fmt="%-${TITLE_WIDTH}s  %-8s  %-4s\n"
     if [[ -t 1 ]]; then
-      printf "\e[2m${fmt}\e[0m" 'ID' 'AGE' 'TITLE'
+      printf "\e[2m${fmt}\e[0m" 'TITLE' 'ID' 'AGE'
     fi
 
     for file in "${files[@]}"; do
@@ -300,25 +305,24 @@ cm() {
       _cm_is_noise "$file" && continue
       title="$(_cm_title "$file")"
       if [[ -n "$title" ]]; then
-        # Real titles (customTitle / aiTitle) are short kebab-case strings
-        # by convention, so we display them in full.
         label="$title"
       else
-        # No title — fall back to the first user message. These can be
-        # arbitrarily long real prose, so cap to ~70 chars and add a
-        # single-char ellipsis. The 120-char grab in the sed pattern
-        # leaves headroom over the display cap; if a multibyte char or
-        # escape lands at the boundary it's fine to over-grab and slice.
+        # No title — fall back to the first user message. Grab up to 120
+        # chars; final truncation to TITLE_WIDTH happens below for ALL
+        # labels (title or preview), so this is just buffer for whatever
+        # we'll display in the column.
         first_user="$(grep -m1 '"type":"user"' "$file" 2>/dev/null \
           | sed -n 's/.*"content":"\([^"]\{0,120\}\).*/\1/p')"
         label="${first_user:-(no preview)}"
-        if (( ${#label} > 70 )); then
-          label="${label:0:70}…"
-        fi
+      fi
+      # Single truncation point so titles and previews both fit cleanly
+      # into the TITLE column. Anything longer gets one trailing ellipsis.
+      if (( ${#label} > TITLE_WIDTH )); then
+        label="${label:0:$((TITLE_WIDTH - 1))}…"
       fi
       age="$(_cm_age "$file")"
       local id_short="${${file:t:r}:0:8}"
-      printf "$fmt" "$id_short" "$age" "$label"
+      printf "$fmt" "$label" "$id_short" "$age"
       (( shown++ ))
       if (( limit > 0 && shown >= limit )); then
         break
