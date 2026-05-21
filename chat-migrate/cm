@@ -215,6 +215,79 @@ cm() {
     return 0
   }
 
+  # Print the last N "real" messages from a session file, one per line,
+  # each truncated to ~110 chars with a `[user]` / `[asst]` role tag.
+  # Used by `cm delete` to surface what was actually being discussed so
+  # the user can spot "oh wait, this had a useful answer near the end".
+  #
+  # "Real" means user-typed prompts and assistant text replies — we skip:
+  #   - tool-result user entries (`toolUseResult` field present)
+  #   - system messages, attachments, file snapshots, etc.
+  # Assistant tool_use parts are rendered as `<ToolName>` placeholders so
+  # a turn that's purely tool calls is still visible (not blank).
+  #
+  # Python is used over jq because message.content can be a string or
+  # a heterogeneous list of dicts; sed+grep can't cleanly walk that.
+  _cm_tail_messages() {
+    local file="$1" n="${2:-3}"
+    python3 - "$file" "$n" <<'PY' 2>/dev/null
+import json, sys
+path, n = sys.argv[1], int(sys.argv[2])
+msgs = []
+with open(path) as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        t = d.get('type')
+        if t not in ('user', 'assistant'):
+            continue
+        # Skip tool-result lines — they're tagged with toolUseResult and
+        # aren't conversational input.
+        if t == 'user' and 'toolUseResult' in d:
+            continue
+        msg = d.get('message') or {}
+        content = msg.get('content')
+        text = ''
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                ctype = c.get('type')
+                if ctype == 'text':
+                    parts.append(c.get('text', ''))
+                elif ctype == 'tool_use':
+                    parts.append(f"<{c.get('name', 'tool')}>")
+            text = ' '.join(parts).strip()
+        if not text:
+            continue
+        # Filter machine-injected "user" content that isn't real input:
+        #   - stop-hook feedback lines from .claude/hooks/*
+        #   - <system-reminder> wrappers
+        #   - <local-command-caveat> wrappers from local slash commands
+        # The goal is to show the human-readable tail of the conversation,
+        # not the harness noise interleaved with it.
+        noise_prefixes = (
+            'Stop hook feedback',
+            '<system-reminder',
+            '<local-command-caveat',
+        )
+        if t == 'user' and text.lstrip().startswith(noise_prefixes):
+            continue
+        msgs.append(('user' if t == 'user' else 'asst', text))
+
+for role, text in msgs[-n:]:
+    snippet = ' '.join(text.split())  # collapse newlines / runs of whitespace
+    if len(snippet) > 110:
+        snippet = snippet[:110] + '…'
+    print(f"  [{role}] {snippet}")
+PY
+  }
+
   # True when a session is "noise" — an automated one-shot SDK run rather
   # than a real conversation. These clutter `cm list` and tab-completion,
   # so we hide them. Detection is by the FIRST user-message content, which
@@ -414,6 +487,10 @@ cm() {
       sub_count=$(find "$sub_dir" -name "*.jsonl" 2>/dev/null | wc -l | tr -d " ")
       echo "  subagent dir: $sub_dir ($sub_count file(s))"
     fi
+    # Last few conversational turns so the user can sanity-check before
+    # confirming. Each line truncated; tool calls shown as `<ToolName>`.
+    echo "  last 3 messages:"
+    _cm_tail_messages "$_cm_match" 3
 
     if (( ! force )); then
       # zsh-native `read -r "var?prompt"` syntax keeps the prompt on the
