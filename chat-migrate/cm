@@ -242,27 +242,38 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
 
     _cm_complete_sessions() {
       [[ -d "$src_proj" ]] || return
-      local -a ids titles
-      local file id title
-      # Sort by mtime, newest first, so completion shows recent sessions first.
+      local -a entries
+      local file id title key
+      # One entry per session, mtime-sorted (newest first). The "value" that
+      # gets inserted on Tab is the title when present, else the session-id.
+      # The other piece shows up as the description in the menu, so the user
+      # always sees both. We deliberately do NOT emit two entries per session
+      # (one keyed by title, one by id) — that listed each session twice,
+      # which the user flagged as noisy.
+      #
+      # Loss vs. the old two-entry form: typing an id-prefix no longer
+      # completes a titled session. That's fine — `cm continue` accepts the
+      # raw id directly, so a user who pastes an id just hits Enter.
       for file in "$src_proj"/*.jsonl(Nom); do
-        # Skip noise (slug-gen, local-command wrappers). We can't call the
-        # in-`cm` helper from here — `_cm_is_noise` is scoped to `cm()` —
-        # so the pattern is inlined. Keep it in sync with `_cm_is_noise`.
+        # Skip noise (slug-gen, local-command wrappers). The in-`cm` helper
+        # `_cm_is_noise` is scoped to `cm()` and not reachable from here, so
+        # the pattern is inlined. KEEP IN SYNC with `_cm_is_noise`.
         grep -m1 '"type":"user"' "$file" 2>/dev/null | grep -qE \
           '"content":"(Generate a kebab-case slug|<local-command-caveat>)' \
           && continue
         id="${file:t:r}"
         title="$(grep '"type":"custom-title"' "$file" 2>/dev/null | tail -1 \
           | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p')"
+        # `_describe` parses each item as "value:description". The colon is
+        # the separator; titles are kebab-case and ids are UUIDs, so neither
+        # contains a colon in practice.
         if [[ -n "$title" ]]; then
-          # Use title:description form so `_describe` shows id alongside.
-          titles+=("${title}:${id:0:8}")
+          entries+=("${title}:${id:0:8}")
+        else
+          entries+=("${id}:(untitled)")
         fi
-        ids+=("${id}:${title:-(untitled)}")
       done
-      _describe -t titles 'session title' titles
-      _describe -t ids 'session id' ids
+      _describe -t sessions 'session' entries
     }
 
     local context state line
