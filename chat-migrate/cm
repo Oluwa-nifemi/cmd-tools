@@ -132,13 +132,38 @@ cm() {
     print -r -- "$title"
   }
 
-  # Compact human-readable age of a file relative to now: "30s", "5m",
-  # "2h", "3d", "2w", "5mo", "1y". Picks the largest unit that fits so
-  # the column stays narrow (≤4 chars). macOS `stat -f %m` is the source;
-  # `date -r FILE` would work too but is slower.
-  _cm_age() {
-    local mtime now diff
-    mtime=$(stat -f %m "$1" 2>/dev/null) || { print -r -- "?"; return; }
+  # Extract the last ISO-8601 `"timestamp":"..."` value from a session
+  # file. Returns an empty string if none found.
+  #
+  # We use file-content timestamps (not file mtime) because mtime is
+  # unreliable: `cm all --move`'s sed rewrite touches every moved file,
+  # smearing every session's mtime to the moment of the move. The
+  # embedded timestamps are the real "when did this conversation last
+  # happen" signal.
+  #
+  # `tail -n 50` keeps the scan cheap on large session files; the latest
+  # timestamp is virtually always in the last few lines.
+  _cm_extract_iso() {
+    tail -n 50 "$1" 2>/dev/null \
+      | grep -o '"timestamp":"[^"]*"' \
+      | tail -1 \
+      | sed -E 's/.*"timestamp":"([^"]*)"/\1/'
+  }
+
+  # Format an ISO-8601 timestamp into a compact human-readable age:
+  # "30s", "5m", "2h", "3d", "2w", "5mo", "1y". Largest-unit-that-fits
+  # keeps the column ≤4 chars wide. Empty input → "?".
+  #
+  # macOS `date -j -f` parses ISO into epoch seconds. We strip the
+  # fractional ".NNN" suffix and trailing "Z" because BSD date's format
+  # string doesn't accept them.
+  _cm_format_age() {
+    local iso="$1" mtime now diff
+    if [[ -n "$iso" ]]; then
+      local clean="${iso%Z}"; clean="${clean%.*}"
+      mtime=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$clean" "+%s" 2>/dev/null)
+    fi
+    [[ -z "$mtime" ]] && { print -r -- "?"; return; }
     now=$(date +%s)
     diff=$(( now - mtime ))
     if   (( diff < 60       )); then print -r -- "${diff}s"
@@ -149,6 +174,12 @@ cm() {
     elif (( diff < 31536000 )); then print -r -- "$(( diff / 2592000 ))mo"
     else                             print -r -- "$(( diff / 31536000 ))y"
     fi
+  }
+
+  # Backward-compat wrapper: age from a file path in one call. Used by
+  # any caller that doesn't need to cache the extracted ISO.
+  _cm_age() {
+    _cm_format_age "$(_cm_extract_iso "$1")"
   }
 
   # Resolve a <target> argument to an absolute path. Returns the alias
@@ -343,14 +374,34 @@ PY
     done
 
     local file title first_user label age shown=0
-    # Always iterate the full mtime-sorted file list and stop after `limit`
-    # *displayed* matches. We can't pre-slice the glob to `limit` items: the
-    # noise filter (slug-gen, local-command) and the optional ACP filter
-    # both reject files post-glob, so a pre-slice would silently show fewer
-    # than `limit` entries when any rejection happens. Iteration cost is
-    # negligible for typical project dirs (a few hundred files at most).
-    local -a files
-    files=("$src_proj"/*.jsonl(Nom))
+    # Sort by embedded last-message timestamp, NOT file mtime. Mtimes are
+    # uniform after `cm all --move`, so we'd otherwise get every moved
+    # session sharing the same "last touched" time and the list order
+    # collapsing into the OS's arbitrary tiebreaker. We extract the
+    # latest `"timestamp":"..."` record from each file, prepend it to
+    # the path, lex-sort descending (ISO-8601 sorts chronologically as
+    # a string), and stash the timestamp in an assoc array so the
+    # display loop can reuse it without re-scanning the file.
+    typeset -A _cm_iso_cache=()
+    local -a ts_pairs=()
+    local f iso
+    for f in "$src_proj"/*.jsonl(N); do
+      iso=$(_cm_extract_iso "$f")
+      _cm_iso_cache[$f]="$iso"
+      # Empty/missing timestamps sort to the bottom via epoch-zero.
+      ts_pairs+=("${iso:-1970-01-01T00:00:00Z}|$f")
+    done
+    # (O) = reverse lex order = newest first (because ISO timestamps sort
+    # chronologically as strings).
+    ts_pairs=("${(@O)ts_pairs}")
+    local -a files=()
+    for f in "${ts_pairs[@]}"; do
+      files+=("${f#*|}")
+    done
+    # We iterate the full sorted list and stop after `limit` *displayed*
+    # matches. We can't pre-slice to `limit` items: the noise filter and
+    # the optional ACP filter both reject files post-sort, so a
+    # pre-slice would silently show fewer than `limit` entries.
 
     # Tabular output: header + 3 columns (TITLE, ID prefix, AGE).
     # Order is TITLE first because that's what the eye looks for; ID and
@@ -397,7 +448,9 @@ PY
       if (( ${#label} > TITLE_WIDTH )); then
         label="${label:0:$((TITLE_WIDTH - 1))}…"
       fi
-      age="$(_cm_age "$file")"
+      # Reuse the ISO we extracted during the sort pass — no second
+      # tail/grep on the same file.
+      age="$(_cm_format_age "${_cm_iso_cache[$file]}")"
       local id_short="${${file:t:r}:0:8}"
       printf "$fmt" "$label" "$id_short" "$age"
       (( shown++ ))
