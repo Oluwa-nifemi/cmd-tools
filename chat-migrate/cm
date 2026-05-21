@@ -17,14 +17,19 @@
 #                                 project into <target>. Useful when you're
 #                                 physically relocating a project on disk
 #                                 and want its chat history to follow.
-#        cm list [N] [all]        List ACP/Zed sessions, newest first
+#        cm list [N] [any|all]    List ACP/Zed sessions, newest first
 #                                 (default: 10). ACP-only by default because
 #                                 these are the sessions hidden from Claude
 #                                 Code's `/resume` picker — the ones you
 #                                 actually need a separate tool to find.
-#                                 Pass `all` to drop both the ACP filter
-#                                 *and* the count limit (show every session
-#                                 of every entrypoint).
+#                                 Two filter knobs are decoupled:
+#                                   `any` drops the ACP-only filter (keeps
+#                                         the count limit). Use with N to
+#                                         scope, e.g. `cm list any 25`.
+#                                   `all` drops BOTH filters — every
+#                                         session of every entrypoint,
+#                                         unlimited. `cm list all` is the
+#                                         "show me everything" command.
 #        cm continue <id-or-title>
 #                                 Resume a session in the current project
 #                                 (incl. ACP sessions hidden from /resume).
@@ -67,8 +72,9 @@ cm() {
     echo "Usage: cm <id-or-title> <target> [--move]"
     echo "       cm all <target> [--move]"
     echo "                                Move/copy every chat from cwd into <target>"
-    echo "       cm list [N] [all]        List ACP/Zed sessions, newest first (default: 10)"
-    echo "                                Pass 'all' to show every session, unlimited"
+    echo "       cm list [N] [any|all]    List ACP/Zed sessions, newest first (default: 10)"
+    echo "                                'any' = drop ACP filter, keep limit (use with N)"
+    echo "                                'all' = drop both filters (every session, unlimited)"
     echo "       cm continue <id-or-title>"
     echo "                                Resume a session via 'claude --resume'"
     echo ""
@@ -220,18 +226,29 @@ cm() {
   }
 
   if [[ "$1" == "list" ]]; then
-    # Default to ACP-only because those are the sessions the native
-    # `/resume` picker hides — listing CLI sessions would mostly duplicate
-    # what /resume already shows. `all` drops both the entrypoint filter
-    # and the count limit in one keyword (rationale: if you ask for "all"
-    # you almost certainly want to see them all, not just 10). A numeric
-    # arg still wins as the limit, so `cm list all 5` = no filter, 5 rows.
-    # `acp` is accepted as an explicit no-op to preserve old muscle memory.
+    # Two orthogonal knobs for the list view, decoupled into two keywords:
+    #   filter_acp=1 (default) — only sessions with entrypoint=sdk-ts.
+    #                            These are the ones /resume hides; listing
+    #                            CLI sessions would mostly duplicate
+    #                            what /resume already shows.
+    #   limit=10     (default) — newest N rows.
+    #
+    #   `any` keyword: drops the ACP filter, keeps the count limit.
+    #                  Use with N to scope: `cm list any 25`.
+    #   `all` keyword: drops BOTH the filter AND the limit. Sugar for
+    #                  "show me literally everything", which is what
+    #                  you almost always want when typing 'all'.
+    #   `acp` keyword: explicit no-op (default behaviour), kept for
+    #                  muscle memory from the earlier API.
+    #   Numeric arg:   sets the count limit. Position-independent vs
+    #                  the keywords because the case branch only
+    #                  changes `limit`, not the filter.
     local limit=10
     local filter_acp=1
     local arg
     for arg in "${@:2}"; do
       case "$arg" in
+        any)  filter_acp=0 ;;
         all)  filter_acp=0; limit=0 ;;
         acp)  filter_acp=1 ;;
         *)    limit="$arg" ;;
@@ -539,7 +556,11 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
       args)
         case $line[1] in
           continue) _cm_complete_sessions ;;
-          list)     _values 'list option' 'all[show every session, unlimited]' ;;
+          list)
+            _values 'list option' \
+              'any[drop ACP-only filter, keep count limit]' \
+              'all[every session, unlimited]'
+            ;;
           all)
             # `cm all <target>` — second word is the target. Offer aliases
             # alongside path completion.
