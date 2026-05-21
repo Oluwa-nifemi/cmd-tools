@@ -224,7 +224,8 @@ main() {
       *) positional+=("$1"); shift ;;
     esac
   done
-  set -- "${positional[@]}"
+  # set -u treats empty array expansion as unbound in some bash versions.
+  (( ${#positional[@]} )) && set -- "${positional[@]}" || set --
 
   # Fast path: bg mode already resolved the run and is handing us the ids.
   if [ -n "$_direct_run_id" ]; then
