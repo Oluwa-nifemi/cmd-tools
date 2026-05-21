@@ -154,11 +154,21 @@ cm() {
       _cm_is_noise "$file" && continue
       title="$(_cm_title "$file")"
       if [[ -n "$title" ]]; then
+        # Real titles (customTitle / aiTitle) are short kebab-case strings
+        # by convention, so we display them in full.
         label="$title"
       else
+        # No title — fall back to the first user message. These can be
+        # arbitrarily long real prose, so cap to ~70 chars and add a
+        # single-char ellipsis. The 120-char grab in the sed pattern
+        # leaves headroom over the display cap; if a multibyte char or
+        # escape lands at the boundary it's fine to over-grab and slice.
         first_user="$(grep -m1 '"type":"user"' "$file" 2>/dev/null \
           | sed -n 's/.*"content":"\([^"]\{0,120\}\).*/\1/p')"
         label="${first_user:-(no preview)}"
+        if (( ${#label} > 70 )); then
+          label="${label:0:70}…"
+        fi
       fi
       age="$(_cm_age "$file")"
       # Columns: <uuid>  <age, right-aligned 4>  <label>. The age column
