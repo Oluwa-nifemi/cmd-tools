@@ -58,7 +58,7 @@ cm() {
   local -A _cm_aliases=(
     api    "$HOME/Documents/work/ardoq-api"
     front  "$HOME/Documents/work/ardoq-packages"
-    python "$HOME/Desktop/devops-monorepo"
+    python "$HOME/Documents/work/devops-monorepo"
   )
 
   if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
