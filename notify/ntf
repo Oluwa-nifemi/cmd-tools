@@ -1,0 +1,42 @@
+# ntf — sleep then send a terminal-notifier alert
+#
+# Usage: ntf <duration> <message>
+#   e.g. ntf 5m "Check this"
+#        ntf 30s "Build done"
+#        ntf 1h "Stand-up time"
+#
+# Duration formats: Ns (seconds), Nm (minutes), Nh (hours), bare N (minutes).
+#
+# Runs completely detached so closing the terminal tab won't kill the timer.
+# Uses nohup + disown rather than &! — &! disowns from zsh's job table but
+# the subshell is still a child of the terminal's process group, so the tab
+# still warns "a process is running". nohup makes the child immune to SIGHUP.
+
+ntf() {
+  if [ $# -lt 2 ]; then
+    echo "usage: ntf <duration> <message>   e.g. ntf 5m \"Check this\"" >&2
+    return 1
+  fi
+
+  local duration="$1"
+  shift
+  local message="$*"
+  local seconds
+
+  case "$duration" in
+    *s) seconds=${duration%s} ;;
+    *m) seconds=$(( ${duration%m} * 60 )) ;;
+    *h) seconds=$(( ${duration%h} * 3600 )) ;;
+    *[!0-9]*) echo "ntf: invalid duration '$duration' (use 30s, 5m, 1h)" >&2; return 1 ;;
+    *) seconds=$(( duration * 60 )) ;;
+  esac
+
+  # Fully detach: nohup makes the child immune to SIGHUP (terminal close),
+  # and disown removes it from zsh's job list so the tab doesn't warn.
+  # /bin/sh -c avoids a subshell that keeps the terminal process group alive.
+  nohup /bin/sh -c "sleep $seconds && terminal-notifier -message $(printf '%q' "$message") -title $(printf '%q' "ntf (${duration})") -activate 'com.apple.Terminal'" \
+    > /dev/null 2>&1 &
+  disown $!
+
+  echo "ntf: will notify in ${duration} — \"${message}\""
+}
