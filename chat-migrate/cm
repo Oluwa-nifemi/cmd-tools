@@ -325,20 +325,23 @@ PY
 
   # True when a session is "noise" — an automated one-shot SDK run rather
   # than a real conversation. These clutter `cm list` and tab-completion,
-  # so we hide them. Detection is by the FIRST user-message content, which
-  # is stable per category:
+  # so we hide them.
   #
-  #   slug-gen        — stop-hook calls into the SDK to mint a kebab-case
-  #                     rename. Prompt always starts with the literal
-  #                     "Generate a kebab-case slug".
-  #   local-command   — sessions spawned by Claude Code local slash commands
-  #                     (e.g. /loop, /watch-build). The harness wraps the
-  #                     user input in `<local-command-caveat>` so the model
-  #                     knows it's not direct user input.
+  # Detection is by the FIRST user-message content, BUT only when the
+  # session has no title. A titled session is always a real conversation —
+  # even if the auto-rename hook fires first (writing a slug-gen prompt as
+  # the very first user entry), a real session follows immediately after.
+  # Without the title guard, those sessions get incorrectly suppressed.
   #
-  # If you add more noise sources, extend the alternation below and add a
-  # comment explaining what triggers that prompt shape.
+  # Noise categories (first-message patterns):
+  #   slug-gen      — stop-hook SDK calls to mint a kebab-case rename.
+  #                   Prompt always starts "Generate a kebab-case slug".
+  #   local-command — sessions from Claude Code local slash commands
+  #                   (e.g. /loop, /watch-build). Harness wraps input in
+  #                   `<local-command-caveat>`.
   _cm_is_noise() {
+    # A real title means a real conversation — never noise.
+    [[ -n "$(_cm_title "$1")" ]] && return 1
     grep -m1 '"type":"user"' "$1" 2>/dev/null | grep -qE \
       '"content":"(Generate a kebab-case slug|<local-command-caveat>)'
   }
@@ -771,9 +774,13 @@ if [[ -n "$ZSH_VERSION" ]] && (( $+functions[compdef] )); then
       # the age-bucketing are duplicated below. KEEP IN SYNC.
       for file in "$src_proj"/*.jsonl(Nom); do
         # Noise filter — KEEP IN SYNC with `_cm_is_noise` inside cm().
-        grep -m1 '"type":"user"' "$file" 2>/dev/null | grep -qE \
-          '"content":"(Generate a kebab-case slug|<local-command-caveat>)' \
-          && continue
+        # Titled sessions are never noise (even if the slug-gen hook fired
+        # first and left a "Generate a kebab-case slug" as the first entry).
+        if [[ -z "$title" ]]; then
+          grep -m1 '"type":"user"' "$file" 2>/dev/null | grep -qE \
+            '"content":"(Generate a kebab-case slug|<local-command-caveat>)' \
+            && continue
+        fi
         id="${file:t:r}"
         title=$(grep '"type":"custom-title"' "$file" 2>/dev/null | tail -1 \
           | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p')
