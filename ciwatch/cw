@@ -273,115 +273,120 @@ main() {
     local _cw_bg_after_resolve=0
   fi
 
+  # All resolution paths below set run_id / repo / run_url / effective_label
+  # and then fall through to a single dispatch block at the bottom that handles
+  # bg fork vs fg watch. Previously the URL and numeric-id paths returned early,
+  # bypassing the bg fork and always running in the foreground.
+  local run_id="" repo="" run_url="" effective_label=""
+
   # Backward compat: full URL
   if [[ "$1" == http* ]]; then
-    local url="$1"
-    local run_id repo
-    run_id=$(echo "$url" | sed -E 's|[?#].*||; s|/job/[0-9]+||' | grep -oE '[0-9]+$')
-    repo=$(echo "$url" | sed -E 's|https://github.com/([^/]+/[^/]+)/.*|\1|')
-    watch_run "$run_id" "$repo" "${label:-$run_id}" "$url"
-    return $?
-  fi
+    run_url="$1"
+    run_id=$(echo "$run_url" | sed -E 's|[?#].*||; s|/job/[0-9]+||' | grep -oE '[0-9]+$')
+    repo=$(echo "$run_url" | sed -E 's|https://github.com/([^/]+/[^/]+)/.*|\1|')
+    effective_label="${label:-$run_id}"
 
   # Backward compat: bare numeric run id
-  if [[ "$1" =~ ^[0-9]+$ ]]; then
-    local run_id="$1" repo
+  elif [[ "$1" =~ ^[0-9]+$ ]]; then
+    run_id="$1"
     repo=$(repo_from_cwd) || { echo "Cannot infer repo from cwd; pass a URL instead." >&2; return 1; }
     [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a URL instead." >&2; return 1; }
-    local url="https://github.com/$repo/actions/runs/$run_id"
-    watch_run "$run_id" "$repo" "${label:-$run_id}" "$url"
-    return $?
-  fi
+    run_url="https://github.com/$repo/actions/runs/$run_id"
+    effective_label="${label:-$run_id}"
 
-  local repo="" action="" branch=""
-  local maybe_repo=""
+  else
+    # Workflow name resolution path.
+    local action="" branch=""
+    local maybe_repo=""
 
-  if maybe_repo=$(resolve_alias "$1"); then
-    repo="$maybe_repo"
-    shift
-  elif [[ "$1" == */* ]]; then
-    repo="$1"
-    shift
-  fi
+    if maybe_repo=$(resolve_alias "$1"); then
+      repo="$maybe_repo"
+      shift
+    elif [[ "$1" == */* ]]; then
+      repo="$1"
+      shift
+    fi
 
-  local action_parts=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -b|--branch) branch="${2:-}"; shift 2 ;;
-      -b=*) branch="${1#-b=}"; shift ;;
-      --branch=*) branch="${1#--branch=}"; shift ;;
-      -h|--help) usage; return 0 ;;
-      *) action_parts+=("$1"); shift ;;
-    esac
-  done
+    local action_parts=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -b|--branch) branch="${2:-}"; shift 2 ;;
+        -b=*) branch="${1#-b=}"; shift ;;
+        --branch=*) branch="${1#--branch=}"; shift ;;
+        -h|--help) usage; return 0 ;;
+        *) action_parts+=("$1"); shift ;;
+      esac
+    done
 
-  if [ ${#action_parts[@]} -eq 0 ]; then
-    echo "Missing <action>." >&2
-    usage
-    return 1
-  fi
-  action="${action_parts[*]}"
+    if [ ${#action_parts[@]} -eq 0 ]; then
+      echo "Missing <action>." >&2
+      usage
+      return 1
+    fi
+    action="${action_parts[*]}"
 
-  if [ -z "$repo" ]; then
-    repo=$(repo_from_cwd)
-    [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a repo alias or owner/repo." >&2; return 1; }
-  fi
+    if [ -z "$repo" ]; then
+      repo=$(repo_from_cwd)
+      [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a repo alias or owner/repo." >&2; return 1; }
+    fi
 
-  if [ -z "$branch" ]; then
-    branch=$(git symbolic-ref --short HEAD 2>/dev/null) || true
-    [ -n "$branch" ] || { echo "Cannot infer branch; pass -b <branch>." >&2; return 1; }
-  fi
+    if [ -z "$branch" ]; then
+      branch=$(git symbolic-ref --short HEAD 2>/dev/null) || true
+      [ -n "$branch" ] || { echo "Cannot infer branch; pass -b <branch>." >&2; return 1; }
+    fi
 
-  echo "Resolving workflow matching '$action' in $repo..."
-  local workflows
-  workflows=$(gh workflow list -R "$repo" --limit 200 --json name,id -q '.[] | "\(.id)\t\(.name)"') || return 1
+    echo "Resolving workflow matching '$action' in $repo..."
+    local workflows
+    workflows=$(gh workflow list -R "$repo" --limit 200 --json name,id -q '.[] | "\(.id)\t\(.name)"') || return 1
 
-  local lc_action
-  lc_action=$(echo "$action" | tr '[:upper:]' '[:lower:]')
+    local lc_action
+    lc_action=$(echo "$action" | tr '[:upper:]' '[:lower:]')
 
-  local matches
-  matches=$(echo "$workflows" | awk -F'\t' -v q="$lc_action" '
-    BEGIN { n = split(q, words, " ") }
-    {
-      name = tolower($2)
-      ok = 1
-      for (i = 1; i <= n; i++) {
-        if (index(name, words[i]) == 0) { ok = 0; break }
+    local matches
+    matches=$(echo "$workflows" | awk -F'\t' -v q="$lc_action" '
+      BEGIN { n = split(q, words, " ") }
+      {
+        name = tolower($2)
+        ok = 1
+        for (i = 1; i <= n; i++) {
+          if (index(name, words[i]) == 0) { ok = 0; break }
+        }
+        if (ok) print
       }
-      if (ok) print
-    }
-  ')
-  local match_count
-  match_count=$(echo -n "$matches" | grep -c '^' || true)
+    ')
+    local match_count
+    match_count=$(echo -n "$matches" | grep -c '^' || true)
 
-  if [ "$match_count" -eq 0 ]; then
-    echo "No workflow in $repo matches '$action'." >&2
-    return 1
+    if [ "$match_count" -eq 0 ]; then
+      echo "No workflow in $repo matches '$action'." >&2
+      return 1
+    fi
+    if [ "$match_count" -gt 1 ]; then
+      echo "Multiple workflows match '$action' in $repo:" >&2
+      echo "$matches" | awk -F'\t' '{print "  - " $2}' >&2
+      return 1
+    fi
+
+    local workflow_id workflow_name
+    workflow_id=$(echo "$matches" | awk -F'\t' '{print $1}')
+    workflow_name=$(echo "$matches" | awk -F'\t' '{print $2}')
+
+    echo "Looking up latest run of '$workflow_name' on branch '$branch'..."
+    local run_json
+    run_json=$(gh run list -R "$repo" -w "$workflow_id" -b "$branch" -L 1 \
+      --json databaseId,status,url,displayTitle) || return 1
+
+    if [ "$run_json" = "[]" ] || [ -z "$run_json" ]; then
+      echo "No runs found for '$workflow_name' on branch '$branch' in $repo." >&2
+      return 1
+    fi
+
+    local run_title
+    run_id=$(echo "$run_json" | jq -r '.[0].databaseId')
+    run_url=$(echo "$run_json" | jq -r '.[0].url')
+    run_title=$(echo "$run_json" | jq -r '.[0].displayTitle')
+    effective_label="${label:-$workflow_name: $run_title}"
   fi
-  if [ "$match_count" -gt 1 ]; then
-    echo "Multiple workflows match '$action' in $repo:" >&2
-    echo "$matches" | awk -F'\t' '{print "  - " $2}' >&2
-    return 1
-  fi
-
-  local workflow_id workflow_name
-  workflow_id=$(echo "$matches" | awk -F'\t' '{print $1}')
-  workflow_name=$(echo "$matches" | awk -F'\t' '{print $2}')
-
-  echo "Looking up latest run of '$workflow_name' on branch '$branch'..."
-  local run_json
-  run_json=$(gh run list -R "$repo" -w "$workflow_id" -b "$branch" -L 1 \
-    --json databaseId,status,url,displayTitle) || return 1
-
-  if [ "$run_json" = "[]" ] || [ -z "$run_json" ]; then
-    echo "No runs found for '$workflow_name' on branch '$branch' in $repo." >&2
-    return 1
-  fi
-
-  local run_id run_url run_title
-  run_id=$(echo "$run_json" | jq -r '.[0].databaseId')
-  run_url=$(echo "$run_json" | jq -r '.[0].url')
-  run_title=$(echo "$run_json" | jq -r '.[0].displayTitle')
 
   if [ "$get" -eq 1 ]; then
     echo "$run_url" | pbcopy
@@ -389,8 +394,6 @@ main() {
     echo "(copied to clipboard)"
     return 0
   fi
-
-  local effective_label="${label:-$workflow_name: $run_title}"
 
   if [ "$_cw_bg_after_resolve" -eq 1 ]; then
     # Resolution succeeded — now it's safe to fork.
