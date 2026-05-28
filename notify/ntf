@@ -31,12 +31,12 @@ ntf() {
     *) seconds=$(( duration * 60 )) ;;
   esac
 
-  # Fully detach: nohup makes the child immune to SIGHUP (terminal close),
-  # and disown removes it from zsh's job list so the tab doesn't warn.
-  # /bin/sh -c avoids a subshell that keeps the terminal process group alive.
-  nohup /bin/sh -c "sleep $seconds && terminal-notifier -message $(printf '%q' "$message") -title $(printf '%q' "ntf (${duration})") -activate 'com.apple.Terminal'" \
-    > /dev/null 2>&1 &
-  disown $!
+  # Wrap in a subshell so the process becomes a grandchild of zsh — it never
+  # enters zsh's job table, which means no "[N] pid" output and no disown needed.
+  # (disown $! fails when job control is off inside functions, which is common.)
+  # nohup still makes the grandchild immune to SIGHUP if the terminal closes.
+  ( nohup /bin/sh -c "sleep $seconds && terminal-notifier -message $(printf '%q' "$message") -title $(printf '%q' "ntf (${duration})") -activate 'com.apple.Terminal'" \
+      > /dev/null 2>&1 & )
 
   echo "ntf: will notify in ${duration} — \"${message}\""
 }
