@@ -26,8 +26,8 @@ set -uo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  cw [<repo>] <action> [-b <branch>] [--label <label>] [--fg]
-  cw <run-url-or-id> [--label <label>] [--fg]
+  cw [<repo>] <action> [-b <branch>] [--label <label>] [-d <delay>] [--fg]
+  cw <run-url-or-id> [--label <label>] [-d <delay>] [--fg]
   cw --status            List background and recent cw runs
   cw --clear-status      Clear the tracked run state
   --get                  Print the matched run URL and copy it to clipboard
@@ -37,6 +37,10 @@ Usage:
   -b        Branch (defaults to current git branch)
   --label   Label shown in the completion notification
             (also accepts --label=<label>)
+  -d        Delay success notification by this duration (e.g. 2m, 90s, 1h).
+            Useful when CI passes but a deploy still needs time to roll out.
+            Failure notifications are always immediate.
+            (also accepts --delay / --delay=<value>)
   --fg      Watch in the foreground (default is to detach and log to
             /tmp/cw-*.log). Notification fires on completion either way.
 
@@ -86,8 +90,21 @@ update_meta() {
   done
 }
 
+# Convert a duration string (30s / 5m / 1h / bare N) to seconds.
+# Same format as ntf so the two tools feel consistent.
+parse_duration() {
+  local duration="$1"
+  case "$duration" in
+    *s) echo "${duration%s}" ;;
+    *m) echo $(( ${duration%m} * 60 )) ;;
+    *h) echo $(( ${duration%h} * 3600 )) ;;
+    *[!0-9]*) echo "cw: invalid delay '$duration' (use 30s, 5m, 1h)" >&2; return 1 ;;
+    *) echo $(( duration * 60 )) ;;
+  esac
+}
+
 watch_run() {
-  local run_id="$1" repo="$2" label="$3" url="$4"
+  local run_id="$1" repo="$2" label="$3" url="$4" delay_secs="${5:-0}"
   local meta="$CW_STATE_DIR/cw-$$.meta"
   write_meta "$meta" \
     "PID=$$" \
@@ -103,6 +120,12 @@ watch_run() {
   update_meta "$meta" "ENDED=$(date +%s)"
   if [ $exit_code -eq 0 ]; then
     update_meta "$meta" "STATUS=passed"
+    # Delay notification to account for post-CI work (e.g. helm deploy).
+    # Failure notifications are immediate — you always want those right away.
+    if [ "$delay_secs" -gt 0 ]; then
+      echo "CI passed — notifying in ${delay_secs}s..."
+      sleep "$delay_secs"
+    fi
     terminal-notifier -title "CI Passed ✅" -message "$label succeeded" -sound default -open "$url"
   else
     update_meta "$meta" "STATUS=failed"
@@ -205,6 +228,7 @@ main() {
   local label=""
   local bg=1
   local get=0
+  local delay_secs=0
   local _direct_run_id="" _direct_run_url="" _direct_repo=""
   local positional=()
   while [ $# -gt 0 ]; do
@@ -214,12 +238,18 @@ main() {
         label="$2"; shift 2 ;;
       --label=*) label="${1#--label=}"; shift ;;
       -l=*) label="${1#-l=}"; shift ;;
+      -d|--delay)
+        [ $# -ge 2 ] || { echo "cw: --delay requires a value" >&2; return 1; }
+        delay_secs=$(parse_duration "$2") || return 1; shift 2 ;;
+      --delay=*) delay_secs=$(parse_duration "${1#--delay=}") || return 1; shift ;;
+      -d=*) delay_secs=$(parse_duration "${1#-d=}") || return 1; shift ;;
       --bg) bg=1; shift ;;
       --fg) bg=0; shift ;;
       --get) get=1; bg=0; shift ;;
       # Internal flags used when bg mode re-invokes itself after resolution.
       --run-id) _direct_run_id="$2"; shift 2 ;;
       --run-url) _direct_run_url="$2"; shift 2 ;;
+      --delay-secs) delay_secs="$2"; shift 2 ;;
       -R) _direct_repo="$2"; shift 2 ;;
       *) positional+=("$1"); shift ;;
     esac
@@ -229,7 +259,7 @@ main() {
 
   # Fast path: bg mode already resolved the run and is handing us the ids.
   if [ -n "$_direct_run_id" ]; then
-    watch_run "$_direct_run_id" "$_direct_repo" "$label" "$_direct_run_url"
+    watch_run "$_direct_run_id" "$_direct_repo" "$label" "$_direct_run_url" "$delay_secs"
     return $?
   fi
 
@@ -367,13 +397,13 @@ main() {
     mkdir -p "$CW_STATE_DIR"
     local log="$CW_STATE_DIR/cw-$$-$(date +%s).log"
     nohup "$0" --fg -R "$repo" --run-id "$run_id" --label "$effective_label" --run-url "$run_url" \
-      >"$log" 2>&1 &
+      --delay-secs "$delay_secs" >"$log" 2>&1 &
     disown 2>/dev/null || true
     echo "cw: backgrounded (pid $!), logging to $log"
     return 0
   fi
 
-  watch_run "$run_id" "$repo" "$effective_label" "$run_url"
+  watch_run "$run_id" "$repo" "$effective_label" "$run_url" "$delay_secs"
 }
 
 main "$@"
