@@ -28,6 +28,7 @@ usage() {
 Usage:
   cw [<repo>] <action> [-b <branch>] [--label <label>] [-d <delay>] [--fg]
   cw <run-url-or-id> [--label <label>] [-d <delay>] [--fg]
+  cw list [<repo>] [<query>]  List workflow names (fuzzy-filtered by query)
   cw --status            List background and recent cw runs
   cw --clear-status      Clear the tracked run state
   --get                  Print the matched run URL and copy it to clipboard
@@ -204,6 +205,46 @@ clear_status() {
   echo "Cleared cw status."
 }
 
+# List workflow names in <repo>, optionally filtered by a multi-word fuzzy query.
+# Each word in the query must appear (case-insensitive) somewhere in the name.
+list_workflows() {
+  local repo="$1" query="${2:-}"
+
+  if [ -z "$repo" ]; then
+    repo=$(repo_from_cwd)
+    [ -n "$repo" ] || { echo "Cannot infer repo from cwd; pass a repo alias or owner/repo." >&2; return 1; }
+  fi
+
+  local workflows
+  workflows=$(gh workflow list -R "$repo" --limit 200 --json name -q '.[].name') || return 1
+
+  if [ -z "$query" ]; then
+    echo "$workflows"
+    return 0
+  fi
+
+  local lc_query
+  lc_query=$(echo "$query" | tr '[:upper:]' '[:lower:]')
+  local matches
+  matches=$(echo "$workflows" | awk -v q="$lc_query" '
+    BEGIN { n = split(q, words, " ") }
+    {
+      name = tolower($0)
+      ok = 1
+      for (i = 1; i <= n; i++) {
+        if (index(name, words[i]) == 0) { ok = 0; break }
+      }
+      if (ok) print
+    }
+  ')
+
+  if [ -z "$matches" ]; then
+    echo "No workflows in $repo match '$query'." >&2
+    return 1
+  fi
+  echo "$matches"
+}
+
 main() {
   if [ $# -eq 0 ]; then
     usage
@@ -223,6 +264,23 @@ main() {
   if [[ "$1" == "--clear-status" ]]; then
     clear_status
     return 0
+  fi
+
+  # "list" subcommand: cw list [<repo>] [<query>]
+  # Repo detection mirrors the main workflow path: alias key or owner/repo prefix.
+  if [[ "$1" == "list" ]]; then
+    shift
+    local list_repo=""
+    local maybe_repo
+    if (( $# > 0 )); then
+      if maybe_repo=$(resolve_alias "$1"); then
+        list_repo="$maybe_repo"; shift
+      elif [[ "$1" == */* ]]; then
+        list_repo="$1"; shift
+      fi
+    fi
+    list_workflows "$list_repo" "$*"
+    return $?
   fi
 
   local label=""
