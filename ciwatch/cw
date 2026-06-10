@@ -96,9 +96,11 @@ update_meta() {
 parse_duration() {
   local duration="$1"
   case "$duration" in
-    *s) echo "${duration%s}" ;;
-    *m) echo $(( ${duration%m} * 60 )) ;;
-    *h) echo $(( ${duration%h} * 3600 )) ;;
+    # Require a digit before the unit so strings like "ai_agents" don't silently
+    # match *s and get treated as a zero-second delay.
+    *[0-9]s) echo "${duration%s}" ;;
+    *[0-9]m) echo $(( ${duration%m} * 60 )) ;;
+    *[0-9]h) echo $(( ${duration%h} * 3600 )) ;;
     *[!0-9]*) echo "cw: invalid delay '$duration' (use 30s, 5m, 1h)" >&2; return 1 ;;
     *) echo $(( duration * 60 )) ;;
   esac
@@ -336,6 +338,12 @@ main() {
   # bg fork vs fg watch. Previously the URL and numeric-id paths returned early,
   # bypassing the bg fork and always running in the foreground.
   local run_id="" repo="" run_url="" effective_label=""
+
+  if [ $# -eq 0 ]; then
+    echo "Missing <action>." >&2
+    usage
+    return 1
+  fi
 
   # Backward compat: full URL
   if [[ "$1" == http* ]]; then
