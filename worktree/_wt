@@ -40,7 +40,7 @@ case "$state" in
       clean)
         _alternative \
           'flags:flag:(--force --merged)' \
-          'worktrees:worktree:$(_wt_worktree_names)'
+          'worktrees:worktree:_wt_worktree_names'
         ;;
     esac
     ;;
