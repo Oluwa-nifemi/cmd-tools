@@ -469,6 +469,8 @@ main() {
       --delay-secs "$delay_secs" >"$log" 2>&1 &
     disown 2>/dev/null || true
     echo "cw: backgrounded (pid $!), logging to $log"
+    # Print the run URL too, so the caller doesn't need a follow-up `cw --get`.
+    echo "cw: run $run_url"
     return 0
   fi
 
