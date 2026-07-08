@@ -1,6 +1,3 @@
-- Record video showing how it's useful
 - Interactive UI for wt install (for both WT_WORKTREES_DIR and WT_LINK_IGNORED)
 - wt install should detect shell (zsh/bash/fish) and write to the right rc file
 - General install script at root of repo for installing any of my tools with their install variants that add both the install and the auto complete as well
-- Start documenting my skills in this repo and using symlinks to link the skills from my .claude folder in here
-- Rename cmd tools to a more general rep with both tools and skills
