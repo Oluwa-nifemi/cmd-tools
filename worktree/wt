@@ -9,10 +9,10 @@
 #                     once and it'll write the export into ~/.zshrc for you)
 #   WT_LINK_IGNORED   space-separated globs, relative to the main worktree,
 #                     that get hard-linked into each new worktree
-#                     (default: "CLAUDE.local.md .env*")
+#                     (default: "CLAUDE.local.md .env* .rtk")
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
-: "${WT_LINK_IGNORED:=CLAUDE.local.md .env*}"
+: "${WT_LINK_IGNORED:=CLAUDE.local.md .env* .rtk}"
 
 wt() {
   if [[ -z "$1" || "$1" == "--help" || "$1" == "-h" ]]; then

@@ -56,3 +56,13 @@ wt install ~/Documents/Programming/worktrees
 ## Branch names with slashes
 
 Branch names like `feat/api` create nested directory structures under the worktrees dir. `wt switch`, `wt clean`, and `wt rename` all handle these correctly — the full branch name (including slashes) is preserved.
+
+## Usage from Claude Code
+
+`wt` is a shell function, not in Claude's PATH — but it can be sourced directly in a Bash tool call:
+
+```bash
+source /Users/Oluwanifemi/Documents/work/cmd-tools/worktree/wt && wt create feat/my-branch
+```
+
+The `cd` at the end of `wt create` has no effect on Claude's working directory (subshell), but the worktree is created correctly at `WT_WORKTREES_DIR/<repo-name>/<branch-name>`. The `CLAUDE.local.md` glob error is harmless when the file doesn't exist.
