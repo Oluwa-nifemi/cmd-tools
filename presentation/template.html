@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  PRESENTATION TEMPLATE — correct-by-construction skeleton.
+
+  This file already satisfies EVERY hard invariant in SKILL.md:
+    - <base target="_blank" /> in <head>
+    - hash routing per slide (window.location.hash + hashchange)
+    - @media print stylesheet (flat document, details forced open, chrome hidden)
+    - Export-to-PDF button (.export-btn -> window.print())
+    - keyboard/touch/nav, TOC overlay, details toggle (with scrollIntoView),
+      code modal (one-shot hljs.highlightElement, NO MutationObserver)
+    - editorial/typewriter aesthetic tokens
+
+  Navigation is DERIVED FROM THE DOM: it reads every <section class="slide">
+  and its data-title. So you can add, remove, or reorder slides WITHOUT
+  touching any array, counter, or positional ID. Do not reintroduce a hardcoded
+  TITLES array or TOTAL count — that fragility is deliberately gone.
+
+  HOW TO USE:
+    1. Replace TITLE_PLACEHOLDER (twice: <title> and cover).
+    2. Replace the SUBTITLE / cover text.
+    3. Replace the single example slide block between <!-- SLIDES:START --> and
+       <!-- SLIDES:END --> with your real slides. Each slide is:
+         <section class="slide" data-title="Short TOC label"> ... </section>
+       The cover is just the first .slide (add class "cover" for centering).
+    4. Fill content. Use the provided component patterns (stat-cards, details
+       panel, code modal trigger, SVG). Do NOT rewrite the CSS or the JS below
+       the SLIDES block — it is invariant and already correct.
+    5. Only override aesthetic tokens if the brief's "Aesthetic overrides" says so.
+
+  DO NOT re-derive the chrome and then screenshot-verify it. It is correct here.
+  Verification for a filled deck is scoped to CONTENT + SVG geometry only
+  (see SKILL.md "Confirm completion").
+  ============================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base target="_blank" />
+  <title>TITLE_PLACEHOLDER</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/atom-one-light.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+  <style>
+    :root {
+      --paper: #f5f3ee;
+      --paper-2: #efece4;
+      --ink: #1c1b18;
+      --ink-soft: #4a463e;
+      --ink-faint: #6b665b;
+      --rule: #d8d2c6;
+      --accent: #3a6b3a;        /* calm manuscript green — Decision/shipped/confirmed */
+      --accent-soft: #eaf0ea;
+      --warn: #9a6a2f;          /* muted amber — pivots / caveats */
+      --warn-soft: #f3ebdd;
+      --font-display: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --font-body: Georgia, "Times New Roman", serif;
+      --font-mono: Menlo, "SF Mono", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    #stage { position: relative; height: 100vh; width: 100vw; overflow: hidden; }
+
+    .slide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      justify-content: safe center; align-items: flex-start;
+      padding: clamp(2rem, 6vw, 5rem) clamp(2rem, 8vw, 7rem) clamp(5rem, 10vh, 7rem);
+      overflow-y: auto; overscroll-behavior: contain;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.35s ease;
+    }
+    .slide.active { opacity: 1; pointer-events: auto; }
+    .slide.cover { justify-content: safe center; }
+
+    .slide-label {
+      font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--ink-faint); margin-bottom: 0.9rem;
+    }
+    h1.cover-title { font-family: var(--font-display); font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.1; margin: 0 0 1.2rem; font-weight: 600; }
+    h2.slide-title { font-family: var(--font-display); font-size: clamp(1.5rem, 3.4vw, 2.3rem); line-height: 1.15; margin: 0 0 1.4rem; font-weight: 600; }
+    .cover-subtitle { font-size: clamp(1rem, 1.8vw, 1.25rem); color: var(--ink-soft); max-width: 60ch; line-height: 1.5; }
+    .cover-rule { width: 4rem; height: 3px; background: var(--accent); margin: 0 0 1.4rem; }
+
+    p, li { font-size: clamp(1rem, 1.5vw, 1.18rem); line-height: 1.5; color: var(--ink); }
+    ul { padding-left: 1.2rem; max-width: 74ch; }
+    li { margin-bottom: 0.55rem; }
+    a { color: var(--accent); text-underline-offset: 2px; }
+    code { font-family: var(--font-mono); font-size: 0.9em; background: var(--paper-2); padding: 0.05em 0.35em; border-radius: 3px; }
+    strong { font-weight: 700; }
+
+    /* Decision / marker chips */
+    .badge { display: inline-block; font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.25em 0.7em; border-radius: 3px; }
+    .badge-decision { background: var(--accent); color: #fff; }
+    .badge-warn { background: var(--warn); color: #fff; }
+    .badge-confirmed { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+    .badge-unverified { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+
+    /* Stat cards — surface tunable numbers/configs */
+    .stat-row { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.2rem 0; width: 100%; }
+    .stat-card { flex: 1 1 8rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; }
+    .stat-card .stat-value { font-family: var(--font-display); font-size: clamp(1.3rem, 2.6vw, 2rem); color: var(--ink); }
+    .stat-card .stat-label { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-top: 0.35rem; }
+
+    /* Note / caveat boxes */
+    .note-box { border-left: 3px solid var(--rule); background: var(--paper-2); padding: 0.9rem 1.2rem; margin: 1rem 0; max-width: 74ch; border-radius: 0 4px 4px 0; }
+    .note-box.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+    .note-box.decision { border-left-color: var(--accent); background: var(--accent-soft); }
+
+    table { border-collapse: collapse; margin: 1rem 0; font-size: clamp(0.9rem, 1.4vw, 1.05rem); }
+    th, td { text-align: left; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--rule); }
+    th { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+
+    /* ── Progressive disclosure ── */
+    .details-toggle { margin-top: 1.4rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent); cursor: pointer; user-select: none; background: none; border: none; padding: 0; }
+    .details-toggle .chevron { display: inline-block; transition: transform 0.2s; }
+    .details-toggle.open .chevron { transform: rotate(90deg); }
+    .details-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; max-width: 74ch; }
+    .details-panel.open { max-height: 3000px; }
+    .details-panel-inner { padding: 1rem 0 0.2rem; border-top: 1px solid var(--rule); margin-top: 0.8rem; }
+    .details-panel-inner p, .details-panel-inner li { font-size: 1rem; color: var(--ink-soft); }
+    .details-panel-inner .ref-list li { font-size: 0.95rem; }
+
+    /* ── Code block + modal ── */
+    .code-block { cursor: pointer; position: relative; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; margin: 1rem 0; overflow-x: auto; max-width: 100%; }
+    .code-block::after { content: "\2197"; position: absolute; top: 0.4rem; right: 0.6rem; opacity: 0.35; pointer-events: none; }
+    .code-block:hover::after { opacity: 1; }
+    .code-block code, .see-code-src { font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.5; }
+    .see-code-src { display: none; }
+    .see-code-btn { font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent); cursor: pointer; background: none; border: 1px solid var(--accent); border-radius: 3px; padding: 0.3em 0.7em; margin-top: 0.8rem; }
+    #code-modal { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.65); z-index: 200; align-items: center; justify-content: center; }
+    #code-modal.visible { display: flex; }
+    #code-modal-inner { background: var(--paper); max-width: 110ch; max-height: 92vh; width: 90%; border-radius: 8px; padding: 1.5rem 1.8rem; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    #code-modal-content { font-size: 0.95rem; overflow: auto; max-height: 82vh; }
+    #code-modal-content pre { margin: 0; }
+    #code-modal-close { position: absolute; top: 0.6rem; right: 0.9rem; font-family: var(--font-mono); font-size: 1.1rem; cursor: pointer; border: none; background: none; color: var(--ink-faint); }
+
+    /* ── SVG diagram tokens (reuse in inline SVGs) ── */
+    .svg-wrap { width: 100%; margin: 1rem 0; }
+    .svg-wrap svg { max-width: 100%; height: auto; }
+
+    /* ── Navigation chrome ── */
+    #nav-controls { position: fixed; bottom: 1.1rem; right: 1.3rem; display: flex; align-items: center; gap: 0.6rem; z-index: 100; }
+    .nav-btn, .export-btn, #toc-btn { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0.35em 0.7em; cursor: pointer; opacity: 0.75; }
+    .nav-btn:hover, .export-btn:hover, #toc-btn:hover { opacity: 1; }
+    .slide-counter { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-faint); min-width: 3.2rem; text-align: center; }
+    #toc-btn { position: fixed; bottom: 1.1rem; left: 1.3rem; z-index: 100; }
+    .toc-overlay { display: none; position: fixed; inset: 0; background: rgba(30,28,24,0.55); z-index: 150; padding: 4rem; overflow-y: auto; }
+    .toc-overlay.visible { display: block; }
+    .toc-list { background: var(--paper); max-width: 60ch; margin: 0 auto; border-radius: 8px; padding: 1.5rem 2rem; }
+    .toc-item { font-family: var(--font-body); font-size: 1.05rem; padding: 0.5rem 0.4rem; border-bottom: 1px solid var(--rule); cursor: pointer; color: var(--ink); }
+    .toc-item:hover { color: var(--accent); }
+    .toc-item .toc-num { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-faint); margin-right: 0.9rem; }
+
+    /* ── Print: flat document, all slides visible, details open, chrome hidden ── */
+    @page { size: 297mm 210mm; margin: 15mm 20mm; }
+    @media print {
+      body, #stage { position: static !important; height: auto !important; overflow: visible !important; }
+      .slide {
+        display: block !important; position: static !important; inset: auto !important;
+        opacity: 1 !important; pointer-events: none; height: auto !important; min-height: 0 !important;
+        overflow: visible !important; padding: 1.5rem 2rem 1rem !important;
+        border-bottom: 2px solid var(--rule); margin-bottom: 2rem;
+      }
+      .details-panel { display: block !important; max-height: none !important; overflow: visible !important; }
+      .details-toggle { display: none !important; }
+      #nav-controls, .toc-overlay, #toc-btn, .slide-counter, .export-btn, .nav-btn { display: none !important; }
+      #code-modal { display: none !important; }
+      .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn { display: none !important; }
+      * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+
+    /* ── Comment feature (additive; see SKILL.md "Reviewer comments") — select any text, comment on it, Confluence/Notion-style ── */
+    .selection-comment-btn { display: none; position: fixed; z-index: 310; font-family: var(--font-mono); font-size: 0.75rem; background: var(--accent); color: var(--paper); border: none; border-radius: 4px; padding: 0.4em 0.8em; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+    .selection-comment-btn.visible { display: block; }
+    .comment-marker { display: inline-block; font-family: var(--font-mono); font-size: 0.65rem; background: var(--warn); color: var(--paper); border-radius: 50%; width: 1.3em; height: 1.3em; line-height: 1.3em; text-align: center; margin-left: 0.15em; cursor: default; vertical-align: super; }
+    .comment-popup { display: none; position: fixed; z-index: 300; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 0.8rem; width: 22rem; box-shadow: 0 6px 24px rgba(0,0,0,0.25); }
+    .comment-popup.visible { display: block; }
+    .comment-popup-quote { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); border-left: 2px solid var(--rule); padding-left: 0.5rem; margin-bottom: 0.5rem; max-height: 4em; overflow: hidden; }
+    .comment-popup textarea { width: 100%; min-height: 4rem; font-family: var(--font-body); font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px; padding: 0.4rem; resize: vertical; box-sizing: border-box; }
+    .comment-popup-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; justify-content: flex-end; }
+    .comment-popup-actions button, .comments-panel-head button, .comment-item button { font-family: var(--font-mono); font-size: 0.75rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0.3em 0.6em; cursor: pointer; }
+    #comment-popup-save { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+    .comments-panel { display: none; position: fixed; top: 0; right: 0; bottom: 0; width: 26rem; max-width: 90vw; background: var(--paper); border-left: 1px solid var(--rule); z-index: 250; box-shadow: -6px 0 24px rgba(0,0,0,0.2); flex-direction: column; }
+    .comments-panel.visible { display: flex; }
+    .comments-panel-head { display: flex; align-items: center; gap: 0.5rem; padding: 1rem; border-bottom: 1px solid var(--rule); font-family: var(--font-display); }
+    .comments-panel-head span { flex: 1; font-size: 1.1rem; }
+    .comments-list { flex: 1; overflow-y: auto; padding: 1rem; }
+    .comment-item { border: 1px solid var(--rule); background: var(--paper-2); border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.7rem; }
+    .comment-item .ctx { font-family: var(--font-mono); font-size: 0.68rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+    .comment-item .quote { font-size: 0.8rem; color: var(--ink-soft); margin: 0.3rem 0; font-style: italic; }
+    .comment-item .txt { font-size: 0.92rem; margin: 0.3rem 0; }
+    .comment-item .row { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+    .comment-toast { display: none; position: fixed; bottom: 4rem; right: 1.3rem; background: var(--ink); color: var(--paper); font-family: var(--font-mono); font-size: 0.8rem; padding: 0.6em 1em; border-radius: 6px; z-index: 400; }
+    .comment-toast.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<div id="stage">
+
+  <!-- SLIDES:START — replace everything between START and END with real slides.
+       Each slide: <section class="slide" data-title="Short label"> ... </section>
+       Keep the invariant chrome (below SLIDES:END) untouched. -->
+
+  <section class="slide cover" data-title="Cover">
+    <div class="cover-rule"></div>
+    <h1 class="cover-title">TITLE_PLACEHOLDER</h1>
+    <p class="cover-subtitle">SUBTITLE_PLACEHOLDER</p>
+  </section>
+
+  <section class="slide" data-title="Example">
+    <div class="slide-label">Section label</div>
+    <h2 class="slide-title">Example slide — delete me</h2>
+    <ul>
+      <li>Tight, information-carrying bullet.</li>
+      <li>Another with an inline source (<a href="#">ref</a>).</li>
+    </ul>
+
+    <!-- Optional stat row -->
+    <div class="stat-row">
+      <div class="stat-card"><div class="stat-value">40 ms</div><div class="stat-label">p50 TTFT</div></div>
+      <div class="stat-card"><div class="stat-value">×2</div><div class="stat-label">example</div></div>
+    </div>
+
+    <!-- Progressive disclosure — the toggle+panel pattern is wired by the JS below automatically -->
+    <button class="details-toggle"><span class="chevron">▸</span> Details</button>
+    <div class="details-panel"><div class="details-panel-inner">
+      <p>Deeper "why" / "why not the other path" lives here.</p>
+    </div></div>
+
+    <!-- Optional "See code" — put source in a hidden .see-code-src; button opens the modal -->
+    <button class="see-code-btn">See code</button>
+    <div class="see-code-src"><pre><code class="language-clojure">(comment "example")</code></pre></div>
+  </section>
+
+  <!-- SLIDES:END -->
+
+</div>
+
+<!-- ── Invariant chrome below: do NOT edit. Nav is DOM-derived. ── -->
+<button id="toc-btn">☰ Contents</button>
+<div id="nav-controls">
+  <button class="nav-btn" id="prev-btn" aria-label="Previous">‹</button>
+  <span class="slide-counter" id="slide-counter">1 / 1</span>
+  <button class="nav-btn" id="next-btn" aria-label="Next">›</button>
+  <button class="export-btn" onclick="window.print()" title="Export to PDF">Export PDF</button>
+  <button class="nav-btn" id="comments-panel-btn" title="View/export comments">Comments (<span id="comment-count">0</span>)</button>
+</div>
+<div class="toc-overlay" id="toc-overlay"><div class="toc-list" id="toc-list"></div></div>
+<div id="code-modal"><div id="code-modal-inner">
+  <button id="code-modal-close" aria-label="Close">✕</button>
+  <div id="code-modal-content"></div>
+</div></div>
+
+<!-- ── Comment feature chrome (additive, see SKILL.md "Reviewer comments") ── select any text on a slide; a 💬 bubble appears near the selection ── -->
+<button id="selection-comment-btn" class="selection-comment-btn">💬 Comment</button>
+<div id="comment-popup" class="comment-popup">
+  <div class="comment-popup-quote" id="comment-popup-quote"></div>
+  <textarea id="comment-popup-input" placeholder="Your note on this…"></textarea>
+  <div class="comment-popup-actions">
+    <button id="comment-popup-save">Save</button>
+    <button id="comment-popup-cancel">Cancel</button>
+  </div>
+</div>
+<div id="comments-panel" class="comments-panel">
+  <div class="comments-panel-head">
+    <span>Comments</span>
+    <button id="comments-export-btn">Copy for Claude Code</button>
+    <button id="comments-panel-close" aria-label="Close">✕</button>
+  </div>
+  <div id="comments-list" class="comments-list"></div>
+</div>
+<div id="comment-toast" class="comment-toast"></div>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var total = slides.length;
+    var current = 0;
+
+    var counter = document.getElementById('slide-counter');
+    var tocList = document.getElementById('toc-list');
+    var tocOverlay = document.getElementById('toc-overlay');
+
+    function clamp(n) { return Math.max(0, Math.min(total - 1, n)); }
+
+    function show(idx, updateHash) {
+      current = clamp(idx);
+      slides.forEach(function (s, i) { s.classList.toggle('active', i === current); });
+      counter.textContent = (current + 1) + ' / ' + total;
+      if (updateHash !== false) {
+        history.replaceState(null, '', '#page-' + (current + 1));
+      }
+    }
+
+    function next() { if (current < total - 1) show(current + 1); }
+    function prev() { if (current > 0) show(current - 1); }
+
+    // Build TOC from the DOM (data-title), so slide count/titles are never hardcoded.
+    slides.forEach(function (s, i) {
+      var item = document.createElement('div');
+      item.className = 'toc-item';
+      var label = s.getAttribute('data-title') || ('Slide ' + (i + 1));
+      item.innerHTML = '<span class="toc-num">' + String(i + 1).padStart(2, '0') + '</span>' + label;
+      item.addEventListener('click', function () { tocOverlay.classList.remove('visible'); show(i); });
+      tocList.appendChild(item);
+    });
+
+    document.getElementById('next-btn').addEventListener('click', next);
+    document.getElementById('prev-btn').addEventListener('click', prev);
+    document.getElementById('toc-btn').addEventListener('click', function () { tocOverlay.classList.toggle('visible'); });
+    tocOverlay.addEventListener('click', function (e) { if (e.target === tocOverlay) tocOverlay.classList.remove('visible'); });
+
+    // Keyboard — don't hijack when focus is inside an open details panel or a modal is up.
+    document.addEventListener('keydown', function (e) {
+      if (document.getElementById('code-modal').classList.contains('visible')) {
+        if (e.key === 'Escape') hideModal();
+        return;
+      }
+      var inPanel = e.target.closest && e.target.closest('.details-panel.open');
+      if (inPanel && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return;
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+      else if (e.key === 'Escape') { tocOverlay.classList.remove('visible'); }
+    });
+
+    // Touch / swipe
+    var touchX = null;
+    document.addEventListener('touchstart', function (e) { touchX = e.changedTouches[0].clientX; }, { passive: true });
+    document.addEventListener('touchend', function (e) {
+      if (touchX === null) return;
+      var dx = e.changedTouches[0].clientX - touchX;
+      if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+      touchX = null;
+    }, { passive: true });
+
+    // Hash routing
+    function fromHash() {
+      var m = /^#page-(\d+)$/.exec(window.location.hash);
+      if (m) { var n = parseInt(m[1], 10) - 1; if (n >= 0 && n < total) { show(n, false); return; } }
+      show(0, false);
+    }
+    window.addEventListener('hashchange', fromHash);
+
+    // Details toggles — wired generically, scroll into view on open
+    document.querySelectorAll('.details-toggle').forEach(function (toggle) {
+      var panel = toggle.nextElementSibling;
+      toggle.addEventListener('click', function () {
+        var isOpen = panel.classList.contains('open');
+        panel.classList.toggle('open', !isOpen);
+        toggle.classList.toggle('open', !isOpen);
+        if (!isOpen) { requestAnimationFrame(function () { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }); }
+      });
+    });
+
+    // Code modal — one-shot highlight, NO MutationObserver (infinite-loop trap)
+    var codeModal = document.getElementById('code-modal');
+    var codeModalContent = document.getElementById('code-modal-content');
+    function showCode(html) {
+      codeModalContent.innerHTML = html;
+      if (window.hljs) { codeModalContent.querySelectorAll('pre code').forEach(function (el) { hljs.highlightElement(el); }); }
+      codeModal.classList.add('visible');
+    }
+    function hideModal() { codeModal.classList.remove('visible'); }
+    document.querySelectorAll('.see-code-btn').forEach(function (btn) {
+      var src = btn.nextElementSibling;
+      btn.addEventListener('click', function () { if (src) showCode(src.innerHTML); });
+    });
+    document.querySelectorAll('.code-block').forEach(function (block) {
+      block.addEventListener('click', function () { showCode('<pre>' + block.innerHTML + '</pre>'); });
+    });
+    document.getElementById('code-modal-close').addEventListener('click', hideModal);
+    codeModal.addEventListener('click', function (e) { if (e.target === codeModal) hideModal(); });
+
+    // Highlight any inline code blocks once on load
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.hljs) { document.querySelectorAll('.code-block code').forEach(function (el) { hljs.highlightElement(el); }); }
+    });
+
+    fromHash();
+  })();
+</script>
+
+<!-- ── Comment feature script (additive; see SKILL.md "Reviewer comments") ──
+     Select any text anywhere on a slide; a 💬 bubble appears near the selection —
+     Confluence/Notion-style, not tied to a fixed list of commentable elements. ── -->
+<script>
+  (function () {
+    var STORE_KEY = 'presentationComments:' + location.pathname;
+    var CONTENT_ROOT = '#stage';
+
+    var selBtn = document.getElementById('selection-comment-btn');
+    var countEl = document.getElementById('comment-count');
+    var popup = document.getElementById('comment-popup');
+    var popupQuote = document.getElementById('comment-popup-quote');
+    var popupInput = document.getElementById('comment-popup-input');
+    var popupSave = document.getElementById('comment-popup-save');
+    var popupCancel = document.getElementById('comment-popup-cancel');
+    var panel = document.getElementById('comments-panel');
+    var panelBtn = document.getElementById('comments-panel-btn');
+    var panelClose = document.getElementById('comments-panel-close');
+    var panelList = document.getElementById('comments-list');
+    var exportBtn = document.getElementById('comments-export-btn');
+    var toast = document.getElementById('comment-toast');
+
+    function loadComments() {
+      try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch (e) { return []; }
+    }
+    function saveComments(list) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(list));
+      renderCount(list);
+    }
+    function renderCount(list) {
+      list = list || loadComments();
+      countEl.textContent = String(list.length);
+    }
+    function excerpt(text) {
+      text = text.trim().replace(/\s+/g, ' ');
+      return text.length > 160 ? text.slice(0, 160) + '…' : text;
+    }
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('visible');
+      setTimeout(function () { toast.classList.remove('visible'); }, 2200);
+    }
+    function isChrome(node) {
+      return !!(node && node.closest && node.closest('#comment-popup, #comments-panel, #selection-comment-btn, #nav-controls, #toc-overlay, #code-modal'));
+    }
+    function locationFor(node) {
+      var el = node.nodeType === 1 ? node : node.parentElement;
+      if (!el) return document.title;
+      var slide = el.closest('.slide');
+      if (!slide) return document.title;
+      var idx = Array.prototype.indexOf.call(document.querySelectorAll('.slide'), slide) + 1;
+      var title = slide.getAttribute('data-title') || '';
+      return 'Slide ' + idx + (title ? ' — ' + title : '');
+    }
+
+    var pendingRange = null;
+    var activeRange = null;
+
+    function contentRootContains(node) {
+      var root = document.querySelector(CONTENT_ROOT);
+      return root && node && root.contains(node);
+    }
+
+    function onSelectionChange() {
+      var sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
+      var text = sel.toString().trim();
+      if (!text) { hideSelBtn(); return; }
+      var anchor = sel.anchorNode;
+      if (isChrome(anchor.nodeType === 1 ? anchor : anchor.parentElement)) { hideSelBtn(); return; }
+      if (!contentRootContains(anchor.nodeType === 1 ? anchor : anchor.parentElement)) { hideSelBtn(); return; }
+      pendingRange = sel.getRangeAt(0).cloneRange();
+      var rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) { hideSelBtn(); return; }
+      showSelBtn(rect);
+    }
+
+    function showSelBtn(rect) {
+      var w = 120;
+      var left = Math.min(Math.max(8, rect.left + rect.width / 2 - w / 2), window.innerWidth - w - 8);
+      var top = Math.max(8, rect.top - 40);
+      selBtn.style.left = left + 'px';
+      selBtn.style.top = top + 'px';
+      selBtn.classList.add('visible');
+    }
+    function hideSelBtn() {
+      selBtn.classList.remove('visible');
+    }
+
+    document.addEventListener('mouseup', function (e) {
+      if (isChrome(e.target)) return;
+      setTimeout(onSelectionChange, 0);
+    });
+    document.addEventListener('keyup', function (e) {
+      if (e.shiftKey) setTimeout(onSelectionChange, 0);
+    });
+
+    selBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    selBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!pendingRange) return;
+      openPopupFromRange(pendingRange);
+      hideSelBtn();
+    });
+
+    function openPopupFromRange(range) {
+      activeRange = range;
+      var text = range.toString();
+      popupQuote.textContent = excerpt(text);
+      popupInput.value = '';
+      popup.classList.add('visible');
+      var rect = range.getBoundingClientRect();
+      var w = 22 * 16, h = 200;
+      var left = Math.min(rect.left, window.innerWidth - w - 16);
+      var top = Math.min(rect.bottom + 8, window.innerHeight - h - 16);
+      popup.style.left = Math.max(8, left) + 'px';
+      popup.style.top = Math.max(8, top) + 'px';
+      popupInput.focus();
+    }
+    function closePopup() {
+      popup.classList.remove('visible');
+      activeRange = null;
+    }
+    popupCancel.addEventListener('click', closePopup);
+
+    function insertMarker(range) {
+      try {
+        var marker = document.createElement('span');
+        marker.className = 'comment-marker';
+        marker.textContent = '💬';
+        marker.title = 'Comment';
+        var r = range.cloneRange();
+        r.collapse(false);
+        r.insertNode(marker);
+      } catch (e) { /* boundary too awkward to mark inline — comment is still saved */ }
+    }
+
+    popupSave.addEventListener('click', function () {
+      var text = popupInput.value.trim();
+      if (!text || !activeRange) { closePopup(); return; }
+      var quote = activeRange.toString();
+      var list = loadComments();
+      list.push({
+        id: 'm' + Date.now() + Math.random().toString(36).slice(2, 6),
+        location: locationFor(activeRange.startContainer),
+        quote: excerpt(quote),
+        text: text,
+        ts: new Date().toISOString(),
+      });
+      saveComments(list);
+      insertMarker(activeRange);
+      window.getSelection().removeAllRanges();
+      closePopup();
+      showToast('Comment saved (' + list.length + ' total)');
+    });
+
+    function renderPanel() {
+      var list = loadComments();
+      panelList.innerHTML = '';
+      if (!list.length) {
+        panelList.innerHTML = '<p style="color:var(--ink-faint);font-size:0.9rem;">No comments yet. Select any text on a slide to leave a note.</p>';
+        return;
+      }
+      list.slice().reverse().forEach(function (c) {
+        var item = document.createElement('div');
+        item.className = 'comment-item';
+        var ctx = document.createElement('div'); ctx.className = 'ctx'; ctx.textContent = c.location;
+        var quote = document.createElement('div'); quote.className = 'quote'; quote.textContent = '"' + c.quote + '"';
+        var txt = document.createElement('div'); txt.className = 'txt'; txt.textContent = c.text;
+        var row = document.createElement('div'); row.className = 'row';
+        var del = document.createElement('button'); del.textContent = 'Delete';
+        del.addEventListener('click', function () {
+          var next = loadComments().filter(function (x) { return x.id !== c.id; });
+          saveComments(next);
+          renderPanel();
+        });
+        row.appendChild(del);
+        item.appendChild(ctx); item.appendChild(quote); item.appendChild(txt); item.appendChild(row);
+        panelList.appendChild(item);
+      });
+    }
+
+    function openPanel() { renderPanel(); panel.classList.add('visible'); }
+    function closePanelFn() { panel.classList.remove('visible'); }
+    panelBtn.addEventListener('click', openPanel);
+    panelClose.addEventListener('click', closePanelFn);
+
+    exportBtn.addEventListener('click', function () {
+      var list = loadComments();
+      if (!list.length) { showToast('No comments to export'); return; }
+      var lines = ['Review comments on "' + document.title + '":', ''];
+      list.forEach(function (c, i) {
+        lines.push((i + 1) + '. [' + c.location + '] on: "' + c.quote + '"');
+        lines.push('   → ' + c.text);
+        lines.push('');
+      });
+      var out = lines.join('\n');
+      function done() { showToast('Copied ' + list.length + ' comment(s) — paste into Claude Code'); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(out).then(done, function () { fallbackCopy(out); done(); });
+      } else {
+        fallbackCopy(out); done();
+      }
+    });
+
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+
+    renderCount();
+  })();
+</script>
+
+</body>
+</html>

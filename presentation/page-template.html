@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  PAGE TEMPLATE — correct-by-construction one-page skeleton.
+
+  This is the PAGE format (deck's sibling): a single scrollable document meant
+  to be read at the reader's own pace, not presented live. No slides, no hash
+  routing, no slide counter, no per-slide nav. Structure is: header -> anchor
+  TOC -> nested <details> sections, generalized from a real one-page epic doc.
+
+  This file already satisfies every PAGE invariant in SKILL.md:
+    - <base target="_blank" /> in <head>
+    - :root aesthetic tokens IDENTICAL to template.html (deck) — same paper/
+      ink/accent colors and Palatino/Georgia/Menlo fonts, so both formats
+      share one visual system. Keep the two files' :root blocks in sync.
+    - <header> with title + subtitle + optional meta line
+    - <nav class="toc"> of plain anchor links (href="#section-id") — NOT
+      hash-routed slides
+    - two-level native <details>/<summary> disclosure (no custom JS toggle
+      logic — the browser handles open/close for free)
+    - @media print stylesheet that flattens the whole document: forces every
+      <details> open, hides the TOC, no pagination hacks — plus an
+      Export-to-PDF button calling window.print()
+
+  HOW TO USE:
+    1. Replace TITLE_PLACEHOLDER and SUBTITLE_PLACEHOLDER in <head> and
+       <header> (and the optional meta line — delete it if unused).
+    2. Replace the TOC links with one anchor per top-level section you add.
+    3. Replace the single sample section between <!-- SECTIONS:START --> and
+       <!-- SECTIONS:END --> with your real content. Each top-level section is:
+         <details class="section" id="your-anchor-id" open>
+           <summary class="section-head"><h2>Section title</h2></summary>
+           <div class="section-body"> ... nested <details class="sub"> ... </div>
+         </details>
+       Nest sub-items as <details class="sub"><summary>...</summary>...</details>
+       inside the section body — same two-level pattern as the sample.
+    4. Do NOT rewrite the CSS. Only override :root tokens if the brief's
+       "Aesthetic overrides" says so — and if you do, consider whether
+       template.html (deck) should get the same override for consistency.
+    5. Strip this instructional comment block before shipping the rendered page.
+
+  DO NOT re-derive the print stylesheet, the base target, or the TOC pattern.
+  They are correct here. Verification for a filled page is scoped to CONTENT
+  only (see SKILL.md "Page-mode invariants").
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<base target="_blank" />
+<title>TITLE_PLACEHOLDER</title>
+<style>
+  :root {
+    --paper: #f5f3ee;
+    --paper-2: #efece4;
+    --ink: #1c1b18;
+    --ink-soft: #4a463e;
+    --ink-faint: #6b665b;
+    --rule: #d8d2c6;
+    --accent: #3a6b3a;        /* calm manuscript green — Decision/shipped/confirmed */
+    --accent-soft: #eaf0ea;
+    --warn: #9a6a2f;          /* muted amber — pivots / caveats */
+    --warn-soft: #f3ebdd;
+    --font-display: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: Georgia, "Times New Roman", serif;
+    --font-mono: Menlo, "SF Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    padding: 0 0 6rem;
+    line-height: 1.5;
+  }
+
+  header {
+    padding: 3rem 2rem 1.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    border-bottom: 2px solid var(--rule);
+  }
+  h1.page-title {
+    font-family: var(--font-display);
+    font-size: 2.1rem;
+    margin: 0 0 0.4rem;
+    font-weight: 600;
+  }
+  .page-subtitle { color: var(--ink-soft); font-size: 1.05rem; margin-bottom: 1rem; }
+  .page-meta { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--ink-faint); font-family: var(--font-mono); }
+  .page-meta span b { color: var(--ink); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
+
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1.5rem 0 2.5rem;
+  }
+  nav.toc a {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink);
+    text-decoration: none;
+    background: #fff;
+    border: 1px solid var(--rule);
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+  }
+  nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+  details.section {
+    margin-bottom: 1.25rem;
+    scroll-margin-top: 1rem;
+    background: #fff;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.9rem 1.2rem;
+  }
+  details.section > summary.section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    cursor: pointer;
+    list-style: none;
+  }
+  details.section > summary.section-head::-webkit-details-marker { display: none; }
+  details.section > summary.section-head::before {
+    content: '▸';
+    font-family: var(--font-mono);
+    color: var(--accent);
+    margin-right: 0.2rem;
+  }
+  details.section[open] > summary.section-head::before { content: '▾'; }
+  details.section[open] > summary.section-head {
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 0.6rem;
+    margin-bottom: 0.9rem;
+  }
+  .section-head h2 {
+    font-family: var(--font-display);
+    font-size: 1.3rem;
+    margin: 0;
+    display: inline;
+    font-weight: 600;
+  }
+
+  .section-body p, .section-body li { font-size: 0.95rem; }
+
+  details.sub {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    margin-bottom: 0.6rem;
+    padding: 0.55rem 0.9rem;
+  }
+  details.sub > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.92rem;
+    padding: 0.25rem 0;
+    font-weight: 600;
+  }
+  details.sub > summary::-webkit-details-marker { display: none; }
+  details.sub > summary::before {
+    content: '▸';
+    font-family: var(--font-mono);
+    color: var(--ink-faint);
+    width: 0.9rem;
+    font-weight: normal;
+  }
+  details.sub[open] > summary::before { content: '▾'; }
+  .sub-body { padding: 0.5rem 0.2rem 0.4rem 1.6rem; border-top: 1px solid var(--rule); margin-top: 0.4rem; }
+  .sub-body p, .sub-body li { margin: 0.3rem 0; font-size: 0.9rem; color: var(--ink-soft); }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code { font-family: var(--font-mono); font-size: 0.88em; background: var(--paper-2); padding: 0.1rem 0.3rem; border-radius: 3px; }
+  strong { font-weight: 700; }
+
+  .badge { display: inline-block; font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.25em 0.7em; border-radius: 3px; }
+  .badge-decision { background: var(--accent); color: #fff; }
+  .badge-warn { background: var(--warn); color: #fff; }
+
+  .export-btn {
+    position: fixed; bottom: 1.1rem; right: 1.3rem; z-index: 100;
+    font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft);
+    background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px;
+    padding: 0.4em 0.8em; cursor: pointer; opacity: 0.75;
+  }
+  .export-btn:hover { opacity: 1; }
+
+  /* ── Print: flat document, everything open, chrome hidden, no pagination hacks ── */
+  @page { size: auto; margin: 15mm 18mm; }
+  @media print {
+    body { padding-bottom: 0; }
+    nav.toc, .export-btn, .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn, #comments-panel-btn { display: none !important; }
+    details.section, details.sub { border: none; background: none; padding: 0; margin: 0 0 1rem; }
+    details.section > summary.section-head::before,
+    details.sub > summary::before { display: none; }
+    /* Force every disclosure open in print — collapsed content must not be lost in the PDF */
+    details.section, details.sub { display: block !important; }
+    .sub-body, .section-body { display: block !important; }
+    * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  }
+
+  /* ── Comment feature (additive; see SKILL.md "Reviewer comments"; kept byte-identical in spirit to template.html) ──
+     Select any text anywhere on the page; a 💬 bubble appears near the selection — Confluence/Notion-style. ── */
+  .selection-comment-btn { display: none; position: fixed; z-index: 310; font-family: var(--font-mono); font-size: 0.75rem; background: var(--accent); color: var(--paper); border: none; border-radius: 4px; padding: 0.4em 0.8em; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+  .selection-comment-btn.visible { display: block; }
+  .comment-marker { display: inline-block; font-family: var(--font-mono); font-size: 0.65rem; background: var(--warn); color: var(--paper); border-radius: 50%; width: 1.3em; height: 1.3em; line-height: 1.3em; text-align: center; margin-left: 0.15em; cursor: default; vertical-align: super; }
+  .comment-popup { display: none; position: fixed; z-index: 300; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 0.8rem; width: 22rem; box-shadow: 0 6px 24px rgba(0,0,0,0.25); }
+  .comment-popup.visible { display: block; }
+  .comment-popup-quote { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); border-left: 2px solid var(--rule); padding-left: 0.5rem; margin-bottom: 0.5rem; max-height: 4em; overflow: hidden; }
+  .comment-popup textarea { width: 100%; min-height: 4rem; font-family: var(--font-body); font-size: 0.9rem; border: 1px solid var(--rule); border-radius: 4px; padding: 0.4rem; resize: vertical; box-sizing: border-box; }
+  .comment-popup-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; justify-content: flex-end; }
+  .comment-popup-actions button, .comments-panel-head button, .comment-item button { font-family: var(--font-mono); font-size: 0.75rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0.3em 0.6em; cursor: pointer; }
+  #comment-popup-save { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+  .comments-panel { display: none; position: fixed; top: 0; right: 0; bottom: 0; width: 26rem; max-width: 90vw; background: var(--paper); border-left: 1px solid var(--rule); z-index: 250; box-shadow: -6px 0 24px rgba(0,0,0,0.2); flex-direction: column; }
+  .comments-panel.visible { display: flex; }
+  .comments-panel-head { display: flex; align-items: center; gap: 0.5rem; padding: 1rem; border-bottom: 1px solid var(--rule); font-family: var(--font-display); }
+  .comments-panel-head span { flex: 1; font-size: 1.1rem; }
+  .comments-list { flex: 1; overflow-y: auto; padding: 1rem; }
+  .comment-item { border: 1px solid var(--rule); background: var(--paper-2); border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.7rem; }
+  .comment-item .ctx { font-family: var(--font-mono); font-size: 0.68rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .comment-item .quote { font-size: 0.8rem; color: var(--ink-soft); margin: 0.3rem 0; font-style: italic; }
+  .comment-item .txt { font-size: 0.92rem; margin: 0.3rem 0; }
+  .comment-item .row { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+  .comment-toast { display: none; position: fixed; bottom: 4rem; right: 1.3rem; background: var(--ink); color: var(--paper); font-family: var(--font-mono); font-size: 0.8rem; padding: 0.6em 1em; border-radius: 6px; z-index: 400; }
+  .comment-toast.visible { display: block; }
+  #page-comment-controls { position: fixed; bottom: 1.1rem; right: 1.3rem; display: flex; gap: 0.6rem; z-index: 100; }
+  #page-comment-controls button { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0.35em 0.7em; cursor: pointer; opacity: 0.75; }
+  #page-comment-controls button:hover { opacity: 1; }
+  @media print { #page-comment-controls { display: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 class="page-title">TITLE_PLACEHOLDER</h1>
+  <div class="page-subtitle">SUBTITLE_PLACEHOLDER</div>
+  <!-- Optional meta line — delete if unused -->
+  <div class="page-meta">
+    <span><b>Date</b> META_PLACEHOLDER</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Anchor-link TOC — one entry per top-level <details class="section" id="..."> below.
+       These are plain anchors (href="#section-id"), NOT hash-routed slides. -->
+  <nav class="toc">
+    <a href="#example-section">Example section</a>
+  </nav>
+
+  <!-- SECTIONS:START — replace the sample section below with real content.
+       Each top-level section: <details class="section" id="anchor-id" open>
+       Keep the two-level details/summary pattern for nested sub-items. -->
+
+  <details class="section" id="example-section" open>
+    <summary class="section-head"><h2>Example section — delete me</h2></summary>
+    <div class="section-body">
+      <p>Top-level scoped content goes here — the face of this section.</p>
+
+      <details class="sub">
+        <summary>Example sub-item — delete me</summary>
+        <div class="sub-body">
+          <p>Nested detail lives here: the deeper "why"/"how", a rejected alternative, a code note, or supporting links. Native <code>&lt;details&gt;</code> — no custom JS toggle needed.</p>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <!-- SECTIONS:END -->
+
+</main>
+
+<button class="export-btn" onclick="window.print()" title="Export to PDF">Export PDF</button>
+<div id="page-comment-controls">
+  <button id="comments-panel-btn">Comments (<span id="comment-count">0</span>)</button>
+</div>
+<button id="selection-comment-btn" class="selection-comment-btn">💬 Comment</button>
+
+<!-- ── Comment feature chrome (additive; see SKILL.md "Reviewer comments") ── -->
+<div id="comment-popup" class="comment-popup">
+  <div class="comment-popup-quote" id="comment-popup-quote"></div>
+  <textarea id="comment-popup-input" placeholder="Your note on this…"></textarea>
+  <div class="comment-popup-actions">
+    <button id="comment-popup-save">Save</button>
+    <button id="comment-popup-cancel">Cancel</button>
+  </div>
+</div>
+<div id="comments-panel" class="comments-panel">
+  <div class="comments-panel-head">
+    <span>Comments</span>
+    <button id="comments-export-btn">Copy for Claude Code</button>
+    <button id="comments-panel-close" aria-label="Close">✕</button>
+  </div>
+  <div id="comments-list" class="comments-list"></div>
+</div>
+<div id="comment-toast" class="comment-toast"></div>
+
+<script>
+  (function () {
+    var STORE_KEY = 'presentationComments:' + location.pathname;
+    var CONTENT_ROOT = 'main';
+
+    var selBtn = document.getElementById('selection-comment-btn');
+    var countEl = document.getElementById('comment-count');
+    var popup = document.getElementById('comment-popup');
+    var popupQuote = document.getElementById('comment-popup-quote');
+    var popupInput = document.getElementById('comment-popup-input');
+    var popupSave = document.getElementById('comment-popup-save');
+    var popupCancel = document.getElementById('comment-popup-cancel');
+    var panel = document.getElementById('comments-panel');
+    var panelBtn = document.getElementById('comments-panel-btn');
+    var panelClose = document.getElementById('comments-panel-close');
+    var panelList = document.getElementById('comments-list');
+    var exportBtn = document.getElementById('comments-export-btn');
+    var toast = document.getElementById('comment-toast');
+
+    function loadComments() {
+      try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch (e) { return []; }
+    }
+    function saveComments(list) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(list));
+      renderCount(list);
+    }
+    function renderCount(list) {
+      list = list || loadComments();
+      countEl.textContent = String(list.length);
+    }
+    function excerpt(text) {
+      text = text.trim().replace(/\s+/g, ' ');
+      return text.length > 160 ? text.slice(0, 160) + '…' : text;
+    }
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('visible');
+      setTimeout(function () { toast.classList.remove('visible'); }, 2200);
+    }
+    function isChrome(node) {
+      return !!(node && node.closest && node.closest('#comment-popup, #comments-panel, #selection-comment-btn, #page-comment-controls'));
+    }
+    function locationFor(node) {
+      var el = node.nodeType === 1 ? node : node.parentElement;
+      var section = el && el.closest ? el.closest('details.section') : null;
+      var heading = section ? section.querySelector('summary.section-head h2, summary h2') : null;
+      return heading ? heading.textContent.trim() : document.title;
+    }
+
+    var pendingRange = null;
+    var activeRange = null;
+
+    function contentRootContains(node) {
+      var root = document.querySelector(CONTENT_ROOT);
+      return root && node && root.contains(node);
+    }
+
+    function onSelectionChange() {
+      var sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
+      var text = sel.toString().trim();
+      if (!text) { hideSelBtn(); return; }
+      var anchor = sel.anchorNode;
+      var anchorEl = anchor.nodeType === 1 ? anchor : anchor.parentElement;
+      if (isChrome(anchorEl) || !contentRootContains(anchorEl)) { hideSelBtn(); return; }
+      pendingRange = sel.getRangeAt(0).cloneRange();
+      var rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) { hideSelBtn(); return; }
+      showSelBtn(rect);
+    }
+
+    function showSelBtn(rect) {
+      var w = 120;
+      var left = Math.min(Math.max(8, rect.left + rect.width / 2 - w / 2), window.innerWidth - w - 8);
+      var top = Math.max(8, rect.top - 40);
+      selBtn.style.left = left + 'px';
+      selBtn.style.top = top + 'px';
+      selBtn.classList.add('visible');
+    }
+    function hideSelBtn() {
+      selBtn.classList.remove('visible');
+    }
+
+    document.addEventListener('mouseup', function (e) {
+      if (isChrome(e.target)) return;
+      setTimeout(onSelectionChange, 0);
+    });
+    document.addEventListener('keyup', function (e) {
+      if (e.shiftKey) setTimeout(onSelectionChange, 0);
+    });
+
+    selBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    selBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!pendingRange) return;
+      openPopupFromRange(pendingRange);
+      hideSelBtn();
+    });
+
+    function openPopupFromRange(range) {
+      activeRange = range;
+      popupQuote.textContent = excerpt(range.toString());
+      popupInput.value = '';
+      popup.classList.add('visible');
+      var rect = range.getBoundingClientRect();
+      var w = 22 * 16, h = 200;
+      var left = Math.min(rect.left, window.innerWidth - w - 16);
+      var top = Math.min(rect.bottom + 8, window.innerHeight - h - 16);
+      popup.style.left = Math.max(8, left) + 'px';
+      popup.style.top = Math.max(8, top) + 'px';
+      popupInput.focus();
+    }
+    function closePopup() {
+      popup.classList.remove('visible');
+      activeRange = null;
+    }
+    popupCancel.addEventListener('click', closePopup);
+
+    function insertMarker(range) {
+      try {
+        var marker = document.createElement('span');
+        marker.className = 'comment-marker';
+        marker.textContent = '💬';
+        marker.title = 'Comment';
+        var r = range.cloneRange();
+        r.collapse(false);
+        r.insertNode(marker);
+      } catch (e) { /* boundary too awkward to mark inline — comment is still saved */ }
+    }
+
+    popupSave.addEventListener('click', function () {
+      var text = popupInput.value.trim();
+      if (!text || !activeRange) { closePopup(); return; }
+      var quote = activeRange.toString();
+      var list = loadComments();
+      list.push({
+        id: 'm' + Date.now() + Math.random().toString(36).slice(2, 6),
+        location: locationFor(activeRange.startContainer),
+        quote: excerpt(quote),
+        text: text,
+        ts: new Date().toISOString(),
+      });
+      saveComments(list);
+      insertMarker(activeRange);
+      window.getSelection().removeAllRanges();
+      closePopup();
+      showToast('Comment saved (' + list.length + ' total)');
+    });
+
+    function renderPanel() {
+      var list = loadComments();
+      panelList.innerHTML = '';
+      if (!list.length) {
+        panelList.innerHTML = '<p style="color:var(--ink-faint);font-size:0.9rem;">No comments yet. Select any text on the page to leave a note.</p>';
+        return;
+      }
+      list.slice().reverse().forEach(function (c) {
+        var item = document.createElement('div');
+        item.className = 'comment-item';
+        var ctx = document.createElement('div'); ctx.className = 'ctx'; ctx.textContent = c.location;
+        var quote = document.createElement('div'); quote.className = 'quote'; quote.textContent = '"' + c.quote + '"';
+        var txt = document.createElement('div'); txt.className = 'txt'; txt.textContent = c.text;
+        var row = document.createElement('div'); row.className = 'row';
+        var del = document.createElement('button'); del.textContent = 'Delete';
+        del.addEventListener('click', function () {
+          var next = loadComments().filter(function (x) { return x.id !== c.id; });
+          saveComments(next);
+          renderPanel();
+        });
+        row.appendChild(del);
+        item.appendChild(ctx); item.appendChild(quote); item.appendChild(txt); item.appendChild(row);
+        panelList.appendChild(item);
+      });
+    }
+
+    function openPanel() { renderPanel(); panel.classList.add('visible'); }
+    function closePanelFn() { panel.classList.remove('visible'); }
+    panelBtn.addEventListener('click', openPanel);
+    panelClose.addEventListener('click', closePanelFn);
+
+    exportBtn.addEventListener('click', function () {
+      var list = loadComments();
+      if (!list.length) { showToast('No comments to export'); return; }
+      var lines = ['Review comments on "' + document.title + '":', ''];
+      list.forEach(function (c, i) {
+        lines.push((i + 1) + '. [' + c.location + '] on: "' + c.quote + '"');
+        lines.push('   → ' + c.text);
+        lines.push('');
+      });
+      var out = lines.join('\n');
+      function done() { showToast('Copied ' + list.length + ' comment(s) — paste into Claude Code'); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(out).then(done, function () { fallbackCopy(out); done(); });
+      } else {
+        fallbackCopy(out); done();
+      }
+    });
+
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+
+    renderCount();
+  })();
+</script>
+
+</body>
+</html>

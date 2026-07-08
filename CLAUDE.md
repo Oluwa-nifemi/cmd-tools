@@ -9,8 +9,11 @@ Personal command-line tools, each in its own subdirectory:
 - `ciwatch/cw` — watch GitHub Actions runs by workflow name; supports `--bg` (default), `--fg`, `--get`, `--status`
 - `git-stack/gs` — stacked-branch git workflow
 - `worktrees/wt` — git worktree manager
+- `orchestrate-build/` — Claude Code skill: do → review → test pipeline for orchestrated multi-unit builds, symlinked into `~/.claude/skills/orchestrate-build`
+- `presentation/` — Claude Code skill: renders self-contained HTML decks/one-pagers, symlinked into `~/.claude/skills/presentation`
+- `research/` — Claude Code skill: deep-dive research mode with living markdown doc, symlinked into `~/.claude/skills/research`
 
-Each tool is a single-file shell script. Iterate incrementally; no build step.
+Most tools are single-file shell scripts; the three skill directories above are Claude Code skills (SKILL.md + supporting scripts/templates) rather than standalone CLIs. Iterate incrementally; no build step.
 
 ## Commenting rule
 
