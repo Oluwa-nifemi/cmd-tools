@@ -13,6 +13,15 @@
 #   CW_REPO_ALIASES   Space-separated "alias:owner/repo" pairs. Example:
 #                       export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
 #                     Used to expand the optional first argument.
+#   CW_DEFAULT_DELAYS Space-separated "pattern:duration" pairs. Example:
+#                       export CW_DEFAULT_DELAYS="deploy-prod:5m release:10m"
+#                     After a workflow name is resolved, each pattern is matched
+#                     as a case-insensitive substring against it; the first hit
+#                     sets the default success-notification delay (same
+#                     30s/5m/1h format as -d). Only applies when the workflow is
+#                     resolved by name — not for direct run-id/URL invocations,
+#                     since there's no workflow name to match against yet.
+#                     An explicit -d/--delay always overrides this.
 #
 # Repo resolution order:
 #   1. First arg matches a CW_REPO_ALIASES entry → use mapped owner/repo
@@ -40,13 +49,17 @@ Usage:
             (also accepts --label=<label>)
   -d        Delay success notification by this duration (e.g. 2m, 90s, 1h).
             Useful when CI passes but a deploy still needs time to roll out.
-            Failure notifications are always immediate.
+            Failure notifications are always immediate. Overrides any default
+            from CW_DEFAULT_DELAYS.
             (also accepts --delay / --delay=<value>)
   --fg      Watch in the foreground (default is to detach and log to
             /tmp/cw-*.log). Notification fires on completion either way.
 
 Configure aliases via CW_REPO_ALIASES, e.g.:
   export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
+
+Configure per-workflow default delays via CW_DEFAULT_DELAYS, e.g.:
+  export CW_DEFAULT_DELAYS="deploy-prod:5m release:10m"
 EOF
 }
 
@@ -64,6 +77,25 @@ resolve_alias() {
 
 repo_from_cwd() {
   gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+}
+
+# Look up a default delay duration for a resolved workflow name from
+# CW_DEFAULT_DELAYS ("pattern:duration ..."). First case-insensitive
+# substring match wins; echoes the raw duration string (e.g. "5m") for
+# parse_duration to convert. Returns 1 if nothing matches.
+resolve_default_delay() {
+  local name="$1"
+  local lc_name
+  lc_name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+  local pair pattern
+  for pair in ${CW_DEFAULT_DELAYS:-}; do
+    pattern=$(echo "${pair%%:*}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lc_name" == *"$pattern"* ]]; then
+      echo "${pair#*:}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 CW_STATE_DIR="${CW_STATE_DIR:-/tmp/cw-state}"
@@ -289,6 +321,7 @@ main() {
   local bg=1
   local get=0
   local delay_secs=0
+  local delay_explicit=0
   local _direct_run_id="" _direct_run_url="" _direct_repo=""
   local positional=()
   while [ $# -gt 0 ]; do
@@ -300,16 +333,19 @@ main() {
       -l=*) label="${1#-l=}"; shift ;;
       -d|--delay)
         [ $# -ge 2 ] || { echo "cw: --delay requires a value" >&2; return 1; }
-        delay_secs=$(parse_duration "$2") || return 1; shift 2 ;;
-      --delay=*) delay_secs=$(parse_duration "${1#--delay=}") || return 1; shift ;;
-      -d=*) delay_secs=$(parse_duration "${1#-d=}") || return 1; shift ;;
+        delay_secs=$(parse_duration "$2") || return 1; delay_explicit=1; shift 2 ;;
+      --delay=*) delay_secs=$(parse_duration "${1#--delay=}") || return 1; delay_explicit=1; shift ;;
+      -d=*) delay_secs=$(parse_duration "${1#-d=}") || return 1; delay_explicit=1; shift ;;
       --bg) bg=1; shift ;;
       --fg) bg=0; shift ;;
       --get) get=1; bg=0; shift ;;
       # Internal flags used when bg mode re-invokes itself after resolution.
       --run-id) _direct_run_id="$2"; shift 2 ;;
       --run-url) _direct_run_url="$2"; shift 2 ;;
-      --delay-secs) delay_secs="$2"; shift 2 ;;
+      # Already resolved (possibly via CW_DEFAULT_DELAYS) by the parent process
+      # before forking; treat as explicit so the fast path below doesn't
+      # re-derive it (it can't anyway — workflow_name isn't available there).
+      --delay-secs) delay_secs="$2"; delay_explicit=1; shift 2 ;;
       -R) _direct_repo="$2"; shift 2 ;;
       *) positional+=("$1"); shift ;;
     esac
@@ -436,6 +472,14 @@ main() {
     local workflow_id workflow_name
     workflow_id=$(echo "$matches" | awk -F'\t' '{print $1}')
     workflow_name=$(echo "$matches" | awk -F'\t' '{print $2}')
+
+    if [ "$delay_explicit" -eq 0 ]; then
+      local default_delay
+      if default_delay=$(resolve_default_delay "$workflow_name"); then
+        delay_secs=$(parse_duration "$default_delay") || return 1
+        echo "Using default delay ${default_delay} for '$workflow_name' (CW_DEFAULT_DELAYS)."
+      fi
+    fi
 
     echo "Looking up latest run of '$workflow_name' on branch '$branch'..."
     local run_json
