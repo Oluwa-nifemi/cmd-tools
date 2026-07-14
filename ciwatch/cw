@@ -13,15 +13,18 @@
 #   CW_REPO_ALIASES   Space-separated "alias:owner/repo" pairs. Example:
 #                       export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
 #                     Used to expand the optional first argument.
-#   CW_DEFAULT_DELAYS Space-separated "pattern:duration" pairs. Example:
-#                       export CW_DEFAULT_DELAYS="deploy-prod:5m release:10m"
-#                     After a workflow name is resolved, each pattern is matched
-#                     as a case-insensitive substring against it; the first hit
-#                     sets the default success-notification delay (same
-#                     30s/5m/1h format as -d). Only applies when the workflow is
-#                     resolved by name — not for direct run-id/URL invocations,
-#                     since there's no workflow name to match against yet.
-#                     An explicit -d/--delay always overrides this.
+#   CW_DEFAULT_DELAYS ";"-separated "pattern:duration" pairs. Example:
+#                       export CW_DEFAULT_DELAYS="deploy-prod:5m;ci checks:10m"
+#                     Semicolons (not spaces) separate pairs so a pattern can
+#                     itself contain spaces — workflow display names often do
+#                     (e.g. "CI Checks", "Build, Test and Deploy"). After a
+#                     workflow name is resolved, each pattern is matched as a
+#                     case-insensitive substring against it; the first hit sets
+#                     the default success-notification delay (same 30s/5m/1h
+#                     format as -d). Only applies when the workflow is resolved
+#                     by name — not for direct run-id/URL invocations, since
+#                     there's no workflow name to match against yet. An
+#                     explicit -d/--delay always overrides this.
 #
 # Repo resolution order:
 #   1. First arg matches a CW_REPO_ALIASES entry → use mapped owner/repo
@@ -58,8 +61,9 @@ Usage:
 Configure aliases via CW_REPO_ALIASES, e.g.:
   export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
 
-Configure per-workflow default delays via CW_DEFAULT_DELAYS, e.g.:
-  export CW_DEFAULT_DELAYS="deploy-prod:5m release:10m"
+Configure per-workflow default delays via CW_DEFAULT_DELAYS (";"-separated
+"pattern:duration" pairs — a pattern may contain spaces), e.g.:
+  export CW_DEFAULT_DELAYS="deploy-prod:5m;ci checks:10m"
 EOF
 }
 
@@ -80,7 +84,9 @@ repo_from_cwd() {
 }
 
 # Look up a default delay duration for a resolved workflow name from
-# CW_DEFAULT_DELAYS ("pattern:duration ..."). First case-insensitive
+# CW_DEFAULT_DELAYS ("pattern:duration;pattern:duration;..."). Pairs are
+# ";"-separated (not space) so a pattern can itself contain spaces, since
+# workflow display names often do (e.g. "CI Checks"). First case-insensitive
 # substring match wins; echoes the raw duration string (e.g. "5m") for
 # parse_duration to convert. Returns 1 if nothing matches.
 resolve_default_delay() {
@@ -88,10 +94,13 @@ resolve_default_delay() {
   local lc_name
   lc_name=$(echo "$name" | tr '[:upper:]' '[:lower:]')
   local pair pattern
+  local IFS=';'
   for pair in ${CW_DEFAULT_DELAYS:-}; do
-    pattern=$(echo "${pair%%:*}" | tr '[:upper:]' '[:lower:]')
-    if [[ "$lc_name" == *"$pattern"* ]]; then
-      echo "${pair#*:}"
+    [ -n "$pair" ] || continue
+    # Trim whitespace left over from "pat:dur; pat:dur" style spacing.
+    pattern=$(echo "${pair%%:*}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+    if [[ -n "$pattern" && "$lc_name" == *"$pattern"* ]]; then
+      echo "${pair#*:}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
       return 0
     fi
   done
