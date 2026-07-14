@@ -370,6 +370,10 @@ restack_upstack() {
   tips_dir="$(gs_dir)/old_tips"
   mkdir -p "$tips_dir"
 
+  # `child` must be local — bash for-loop variables aren't scoped by default,
+  # so without this an unrelated caller's own `child` variable further up the
+  # call stack gets clobbered once this function (or its recursion) returns.
+  local child
   for child in $children; do
     branch_exists "$child" || continue
 
@@ -876,6 +880,77 @@ cmd_move() {
   restack_upstack "$cur"
 
   success "moved '$cur' onto '$target'"
+}
+
+# Splice a new branch between an existing parent and child — the "I forgot to
+# make this its own branch" case. Equivalent to:
+#   gs co <parent> && gs create <name> && gs co <child> && gs move --onto <name>
+# but done as one step, and it validates that <child>'s current parent really
+# is <parent> first (otherwise this would silently reparent the wrong thing).
+cmd_insert() {
+  ensure_gs_init
+  local name="" parent="" child=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --between)
+        shift
+        parent="${1:-}"; shift
+        child="${1:-}"
+        [[ -z "$parent" || -z "$child" ]] && die "--between requires two branches: <parent> <child>"
+        ;;
+      -*) die "unknown flag: $1" ;;
+      *)  name="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -z "$name" ]] && die "usage: gs insert <name> --between <parent> <child>"
+  [[ -z "$parent" || -z "$child" ]] && die "usage: gs insert <name> --between <parent> <child>"
+  branch_exists "$name" && die "branch '$name' already exists"
+
+  local trunk
+  trunk="$(trunk_branch)"
+  if [[ "$parent" != "$trunk" ]]; then
+    branch_exists "$parent" || die "branch '$parent' does not exist"
+  fi
+  branch_exists "$child" || die "branch '$child' does not exist"
+  is_tracked "$child" || die "'$child' is not tracked by gs"
+
+  local actual_parent
+  actual_parent="$(get_parent "$child" 2>/dev/null)" || actual_parent=""
+  [[ "$actual_parent" == "$parent" ]] || die "'$child' is stacked on '$actual_parent', not '$parent' — use 'gs move --onto' if you want to reparent it"
+
+  local original
+  original="$(current_branch)"
+
+  # Create the new branch off parent, same as `gs create` would.
+  git checkout "$parent" --quiet
+  git checkout -b "$name" --quiet
+  set_parent "$name" "$parent"
+
+  # Save child's pre-rebase tip so restack_upstack has a real fork point for
+  # child's own descendants (same convention restack_upstack itself uses —
+  # without this the next restack would fall back to merge-base and warn).
+  local tips_dir
+  tips_dir="$(gs_dir)/old_tips"
+  mkdir -p "$tips_dir"
+  git rev-parse "$child" > "$tips_dir/$(encode_branch "$child")"
+
+  # Splice child onto the new branch. name currently == parent's tip, so
+  # rebasing with upstream=parent, onto=name replays child's commits unchanged.
+  info "rebasing '$child' onto '$name'..."
+  git rebase --onto "$name" "$parent" "$child" --quiet || {
+    die "rebase failed — resolve conflicts, run 'git rebase --continue', then 'gs restack --all' to fix up metadata and descendants"
+  }
+  set_parent "$child" "$name"
+
+  info "restacking descendants of '$child'..."
+  restack_upstack "$child"
+  cleanup_restack_tips
+
+  git checkout "$name" --quiet 2>/dev/null || true
+  success "inserted '$name' between '$parent' and '$child'"
 }
 
 # Remove a branch from gs tracking without deleting the git branch.
@@ -1574,6 +1649,8 @@ Commands:
   top                     Jump to topmost branch in stack
   bottom                  Jump to bottommost branch (near trunk)
   move --onto <branch>    Move current branch to a new parent
+  insert <name> --between <parent> <child>
+                          Splice a new branch between an existing parent and child
   untrack [branch]        Remove branch from gs tracking
   fold                    Merge current branch into its parent
   split <commit> <name>   Split branch at commit, rest becomes new child
@@ -1616,6 +1693,7 @@ main() {
     top)      cmd_top "$@" ;;
     bottom)   cmd_bottom "$@" ;;
     move)     cmd_move "$@" ;;
+    insert)   cmd_insert "$@" ;;
     untrack)  cmd_untrack "$@" ;;
     fold)     cmd_fold "$@" ;;
     split)    cmd_split "$@" ;;

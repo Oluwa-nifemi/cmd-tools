@@ -6,7 +6,7 @@ local -a subcmds
 subcmds=(
   init create commit track stack restack
   ls list log up down top bottom
-  move untrack fold split land
+  move insert untrack fold split land
   push push-pr pr
   checkout co diff delete rename sync
   help
@@ -64,6 +64,11 @@ case "$state" in
     case "$cmd" in
       create|track|stack|move|untrack|delete)
         _gs_branch_names
+        ;;
+      insert)
+        _alternative \
+          'flags:flag:(--between)' \
+          'branches:branch:$(_gs_branch_names)'
         ;;
       up|down)
         _message 'steps (optional)'

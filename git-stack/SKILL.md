@@ -86,6 +86,7 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 | `gs stack <branch>` | Add a branch on top of the current one |
 | `gs restack [--all] [--autostash] [--continue]` | Manually rebase upstack (use after raw git commands). `--autostash` stashes/restores a dirty working tree around the rebase chain |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
+| `gs insert <name> --between <parent> <child>` | Splice a new branch between an existing parent and child (validates `<child>` is currently stacked on `<parent>`) |
 | `gs split <commit> <new-name>` | Split branch at a commit — rest becomes a new child branch |
 | `gs fold` | Squash-merge current branch into its parent and clean up |
 | `gs land [branch] [--squash\|--merge\|--rebase]` | Merge the bottommost PR into trunk (checks approval), pull, reparent children, delete branch |
