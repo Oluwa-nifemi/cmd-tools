@@ -486,7 +486,7 @@ main() {
       local default_delay
       if default_delay=$(resolve_default_delay "$workflow_name"); then
         delay_secs=$(parse_duration "$default_delay") || return 1
-        echo "Using default delay ${default_delay} for '$workflow_name' (CW_DEFAULT_DELAYS)."
+        echo "Using default delay ${default_delay} for '$workflow_name'."
       fi
     fi
 
