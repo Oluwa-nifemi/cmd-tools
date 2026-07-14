@@ -84,7 +84,7 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 |---------|-------------|
 | `gs track <b1> [b2] ... [--onto <branch>]` | Track existing branches as a stack and auto-restack them |
 | `gs stack <branch>` | Add a branch on top of the current one |
-| `gs restack [--all \| --continue]` | Manually rebase upstack (use after raw git commands) |
+| `gs restack [--all] [--autostash] [--continue]` | Manually rebase upstack (use after raw git commands). `--autostash` stashes/restores a dirty working tree around the rebase chain |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
 | `gs split <commit> <new-name>` | Split branch at a commit — rest becomes a new child branch |
 | `gs fold` | Squash-merge current branch into its parent and clean up |
@@ -95,7 +95,7 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 ### Remote
 | Command | Description |
 |---------|-------------|
-| `gs push` | Push from current branch downward through stack to remote |
+| `gs push [--all]` | Push from current branch downward through stack to remote (`--all` = every tracked branch, BFS from trunk) |
 | `gs push-pr` | Push downstack and create/update draft PRs (titles from first commit message) |
 | `gs pr` | Open the PR for current branch in browser |
 | `gs sync` | Pull trunk, detect merged branches (squash-merge aware), reparent children, restack |
@@ -119,7 +119,12 @@ Zsh completion is available via `_gs` in the repo. To install:
 cp git-stack/_gs ~/.zsh/completions/_gs
 ```
 
-Completes subcommands, tracked branch names, flags (`--all`, `--continue`, `--squash`, etc.), and commit hashes for `gs split`.
+Completes subcommands, tracked branch names, flags (`--all`, `--autostash`, `--continue`, `--squash`, etc.), and commit hashes for `gs split`.
+
+## Sharp edges
+
+- **Scripting raw `git branch -f` after a rebase.** If you script branch updates yourself (e.g. `git rebase --onto X Y` followed by `git branch -f <branch> HEAD`), the `branch -f` is redundant and fails with `cannot force update the branch '<name>' used by worktree at <path>` for whichever branch is currently checked out — the rebase already moved that branch's ref in place. Drop the `branch -f` for the checked-out branch.
+- **Reshaping a file mid-stack can silently duplicate content.** If an earlier branch in the stack renames, splits, or moves sections out of a file (e.g. `docs/x.md` → `docs/x/a.md` + `docs/x/b.md`), a later branch's commit that still patches the *old* file can apply its diff against whichever file now matches the surrounding context — landing content in the wrong place instead of failing. `gs restack` doesn't detect this (git's patch application is doing the locally "correct" thing). After reorganizing a file's shape partway through a stack, diff the final state of that file across all descendant branches to confirm nothing landed twice.
 
 ## Squash-merge handling
 

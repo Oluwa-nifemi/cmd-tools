@@ -75,7 +75,7 @@ case "$state" in
         ;;
       restack)
         _alternative \
-          'flags:flag:(--all --continue --upstack)'
+          'flags:flag:(--all --autostash --continue --upstack)'
         ;;
       push)
         _gs_branch_names

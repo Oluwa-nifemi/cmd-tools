@@ -324,16 +324,20 @@ cmd_commit() {
 cmd_restack() {
   ensure_gs_init
   local mode="upstack"
+  local autostash=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --upstack) mode="upstack" ;;
       --all)     mode="all" ;;
+      --autostash) autostash=1 ;;
       --continue) restack_continue; return ;;
       *) die "unknown argument: $1" ;;
     esac
     shift
   done
+
+  [[ $autostash -eq 1 ]] && restack_autostash_push
 
   if [[ "$mode" == "all" ]]; then
     local trunk
@@ -369,6 +373,17 @@ restack_upstack() {
   for child in $children; do
     branch_exists "$child" || continue
 
+    # Skip if child is already on top of base. Tip-equality alone misses the
+    # case where the child was just rebased (e.g. by restack_continue resuming
+    # from the parent) — its tip differs from base but base is in its ancestry.
+    # Checked before computing fork_point/warning below: a true no-op has
+    # nothing to rebase, so the "no saved old-tip" warning would just be noise.
+    if git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
+      info "'$child' is already up to date with '$base'"
+      restack_upstack "$child"
+      continue
+    fi
+
     # Determine the fork point: if we previously rebased the parent and saved
     # its old tip, use that. Otherwise fall back to merge-base.
     local fork_point=""
@@ -386,15 +401,6 @@ restack_upstack() {
       # new parent. We surface this rather than silently producing duplicates.
       fork_point="$(git merge-base "$base" "$child" 2>/dev/null)" || fork_point="$base"
       warn "no saved old-tip for '$base' (gs commit wasn't used). Falling back to merge-base. If '$base' was rebased, the upstack rebase may include duplicate commits or hit unexpected conflicts."
-    fi
-
-    # Skip if child is already on top of base. Tip-equality alone misses the
-    # case where the child was just rebased (e.g. by restack_continue resuming
-    # from the parent) — its tip differs from base but base is in its ancestry.
-    if git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
-      info "'$child' is already up to date with '$base'"
-      restack_upstack "$child"
-      continue
     fi
 
     # Save child's current tip before rebasing (its children will need this)
@@ -429,6 +435,30 @@ restack_upstack() {
 # Clean up old_tips after a full restack completes
 cleanup_restack_tips() {
   rm -rf "$(gs_dir)/old_tips"
+  restack_autostash_pop
+}
+
+# Autostash support for `gs restack --autostash`. Stashes dirty working-tree
+# state before the rebase chain starts; cleanup_restack_tips pops it back once
+# the whole chain succeeds — whether that happens in one shot or via a later
+# `--continue` resume — so the pop always happens on the same branch it was
+# stashed from, once the tree is safe to touch again.
+restack_autostash_push() {
+  local stash_marker
+  stash_marker="$(gs_dir)/restack_stash"
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    git stash push -u --quiet -m "gs-restack-autostash" || die "autostash failed — resolve working tree state and retry"
+    touch "$stash_marker"
+  fi
+}
+
+restack_autostash_pop() {
+  local stash_marker
+  stash_marker="$(gs_dir)/restack_stash"
+  if [[ -f "$stash_marker" ]]; then
+    rm -f "$stash_marker"
+    git stash pop --quiet || warn "autostash pop hit a conflict — resolve manually, your stashed changes are still in 'git stash list'"
+  fi
 }
 
 restack_continue() {
@@ -446,11 +476,30 @@ restack_continue() {
     esac
   done < "$state_file"
 
-  # Continue the rebase
-  if ! git rebase --continue; then
-    echo "Still have conflicts. Resolve them and run 'gs restack --continue' again."
-    exit 1
+  # Only call `git rebase --continue` if a rebase is actually in progress.
+  # If it's not (e.g. the user ran `git rebase --continue` directly and it
+  # already finished), calling it again fails with "no rebase in progress" —
+  # a different situation from "still conflicted" that used to get the same
+  # wrong message and leave restack_state stale forever.
+  local rebase_in_progress=0
+  if [[ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ]] || \
+     [[ -d "$(git rev-parse --git-path rebase-apply 2>/dev/null)" ]]; then
+    rebase_in_progress=1
   fi
+
+  if [[ $rebase_in_progress -eq 1 ]]; then
+    if ! git rebase --continue; then
+      echo "Still have conflicts. Resolve them and run 'gs restack --continue' again."
+      exit 1
+    fi
+  elif ! git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
+    # No rebase in progress, but child was never landed onto base either —
+    # the rebase was likely aborted rather than finished. Don't guess.
+    rm -f "$state_file"
+    die "no rebase in progress and '$child' wasn't rebased onto '$base' — restack state was stale. Run 'gs restack --all' to retry."
+  fi
+  # else: the rebase already completed on its own — fall through and resume
+  # propagation from $base so remaining siblings still get processed.
 
   rm -f "$state_file"
 
@@ -1512,10 +1561,12 @@ Usage: gs <command> [options]
 Commands:
   init                    Initialize gs in current repo
   create <name> [-m msg]  Create a new stacked branch
+  rename <new-name>       Rename current branch and update gs metadata
   track <b1> [b2] ...     Track existing branches as a stack
   stack <branch>          Add a branch on top of the current one
   commit [-a] [-m msg]    Commit and auto-restack upstack
-  restack [--all]         Rebase upstack branches (or entire stack)
+  restack [--all] [--autostash] [--continue]
+                          Rebase upstack branches (or entire stack)
   ls / list [--pr]        Show the stack tree (--pr fetches PR status)
   log [--pr]              Show stack tree with commit messages (--pr fetches PR status)
   up [N]                  Move up to child branch
@@ -1575,6 +1626,7 @@ main() {
     checkout|co) cmd_checkout "$@" ;;
     diff)     cmd_diff "$@" ;;
     delete)   cmd_delete "$@" ;;
+    rename)   cmd_rename "$@" ;;
     sync)     cmd_sync "$@" ;;
     help|-h|--help) cmd_help ;;
     *)        die "unknown command: $cmd. Run 'gs help' for usage." ;;
