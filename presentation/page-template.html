@@ -498,7 +498,12 @@
         lines.push('');
       });
       var out = lines.join('\n');
-      function done() { showToast('Copied ' + list.length + ' comment(s) — paste into Claude Code'); }
+      var count = list.length;
+      function done() {
+        saveComments([]);
+        renderPanel();
+        showToast('Copied ' + count + ' comment(s) & cleared — paste into Claude Code');
+      }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(out).then(done, function () { fallbackCopy(out); done(); });
       } else {

@@ -16,20 +16,24 @@ Two renderer outputs, one shared aesthetic:
 
 The renderer branches on the brief's `format` field (see `brief-format.md`). Everything else in this file that's deck-specific is marked as such; content-authoring principles (don't compress the source, verify claims, real SVGs, etc.) apply to both formats.
 
-## Confirm audience, purpose, and format first
+## Confirm audience, purpose, size, and format first
 
-Before rendering, establish three things:
+Before rendering, establish four things:
 
 - **AUDIENCE** — execs / eng / mixed / self. Tunes depth: execs get shorter content, fewer or no code modals; eng keeps deep-dive detail and code.
 - **PURPOSE** — tech talk / decision doc / scoped plan / status.
+- **SIZE** — lean (default) or comprehensive. Take the cue from the user's words: "basic" / "simple" / "quick" / "short" / "rough" / "just the gist" → lean; "comprehensive" / "detailed" / "thorough" / "full" / "deep dive" / "cover everything" → comprehensive. **When size is unstated, default to lean** — never produce a large deck for an unqualified request. See "Right-size the deck — default lean" under Slide structure.
 - **FORMAT** — deck or page.
 
-**When these aren't clear from the brief or the prompt, default to asking** — 2-3 questions via AskUserQuestion — rather than assuming. Don't silently pick a format and render.
+**When AUDIENCE, PURPOSE, or FORMAT aren't clear from the brief or the prompt, default to asking** — 2-3 questions via AskUserQuestion — rather than assuming. Don't silently pick a format and render. SIZE is the exception: when unstated, don't ask — default to lean and let the user ask for more.
 
 Heuristics for when NOT to ask (the signal is already unambiguous):
-- Explicit "one-pager" / "scoped" / "for reference" / "handoff" → page.
-- Explicit "tech talk" / "present" / "walk through" → deck.
+- Explicit "one-pager" / "scoped" / "for reference" / "handoff" / "doc" / "write-up" → page.
+- Explicit "tech talk" / "present" / "walk through" / "slides" / "deck" → deck.
 - A large source with many independent, live-presentable sections → deck.
+- **"basic" / "simple" / "quick" / "just a page" with no presenting cue → page.** A deck exists for *live presenting*; if nobody is standing up to present, the lighter one-scroll page is almost always what's wanted. (Same words also set SIZE = lean — two axes: pick the page format AND keep it lean.)
+
+When genuinely ambiguous — a bare "make a presentation about X" with no format, size, or presenting cue — ask deck-vs-page rather than silently defaulting to deck.
 
 Scope note: many independent sections you'll present live → deck; one scoped artifact meant to be read or handed off → page. The "don't compress the source" rule (below) applies to both formats regardless of which one is chosen.
 
@@ -46,7 +50,7 @@ It can also be invoked directly by a user with a hand-written brief.
 
 A caller runs this protocol:
 
-1. **Confirm audience, purpose, and format** per the section above — ask if unclear.
+1. **Confirm audience, purpose, size, and format** per the section above — ask if unclear (but default SIZE to lean rather than asking).
 2. **Compose a brief** following the schema in `brief-format.md`, including `format:`, `audience:`, `purpose:`. Save it (e.g. `<output-dir>/presentation-brief.md`).
 3. **Dispatch a sub-agent on Sonnet** (Opus if budget allows). Brief the sub-agent to:
    - Invoke the `frontend-design` skill as its first action
@@ -62,11 +66,30 @@ Note: the two templates' `:root` aesthetic tokens (colors, fonts) are kept byte-
 
 If `frontend-design` is not installed, prompt the user to install it from `https://github.com/anthropics/claude-code/tree/main/plugins/frontend-design/skills/frontend-design` before proceeding.
 
+## Quick path — small pages render inline (no sub-agent)
+
+The full protocol above (brief file → dispatched sub-agent → `frontend-design` → screenshots) is built for decks and large/complex renders. It's too heavy for a small one-page doc, and the latency reads as "taking forever" for something simple. When ALL of these hold, skip it and render inline yourself:
+
+- `format: page` (decks always use the full protocol), and
+- SIZE is lean (a few sections), and
+- the content is small and already in hand (short inline content, or one small notes file — not a multi-file corpus), and
+- no custom SVG diagram is needed (a table or code block is fine), and
+- no file already exists at the output path (otherwise use the re-render protocol).
+
+Quick-path steps — you, the calling agent: no sub-agent, no `frontend-design`, no `agent-browser`:
+1. Copy `page-template.html` to the output path.
+2. Fill the content: title/subtitle, the anchor-TOC (one link per section), and the `<details class="section">` sections between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->`. Leave the `<style>`/`<script>` chrome untouched. Follow the content principles in this file — especially "Less is more".
+3. Replace the placeholders (`grep -c PLACEHOLDER <output>` must return 0) and run the page verification grep: `grep -E '<base target="_blank"|class="toc"|<details class="section"|@media print|export-btn' <output>` — all five must appear. That grep is the whole check: no screenshots, because there's no SVG and the chrome is correct by construction.
+
+If any criterion fails — a deck, comprehensive size, a custom SVG, a large multi-source corpus, or an existing file to reconcile — use the full sub-agent protocol above. When unsure, use the full path.
+
 ## Start from the template (don't re-derive the chrome)
 
-`template.html` in this skill folder is a **correct-by-construction skeleton**. It already contains every hard invariant below — base target, hash routing, print stylesheet, export button, nav/TOC, details toggles, code modal — plus the aesthetic tokens and reusable component patterns (stat cards, note boxes, badges, SVG wrapper). **Copy it to the output path and fill only the content**, then leave everything below the `<!-- SLIDES:END -->` marker untouched.
+**Two correct-by-construction skeletons — pick by format: `template.html` for a `deck`, `page-template.html` for a `page`.** Neither is the default; the format decision (above) picks one. Both already contain every hard invariant, the shared `:root` aesthetic tokens, and reusable component patterns. **Copy the right one to the output path and fill only the content; leave the CSS and JS untouched.**
 
-Rules:
+The rules below name deck structures (`.slide`, the `<!-- SLIDES:END -->` marker); the page equivalents are top-level `<details class="section">` blocks between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->` (see "Page-mode invariants"). The *principle* — copy skeleton, fill content, never touch the chrome — is identical for both. For a `deck`, `template.html` carries base target, hash routing, print stylesheet, export button, nav/TOC, details toggles, and code modal; copy it and leave everything below `<!-- SLIDES:END -->` untouched.
+
+Deck rules:
 - Each slide is `<section class="slide" data-title="Short TOC label"> … </section>`. The cover is the first slide (add class `cover`).
 - **Strip the template's instructional header comment** (the `<!-- ... PRESENTATION TEMPLATE ... -->` block between `<!DOCTYPE html>` and `<html lang="en">`) from the rendered deck — it's scaffolding for the filler, not part of a finished deck. Also replace both `TITLE_PLACEHOLDER` occurrences and `SUBTITLE_PLACEHOLDER`; a `grep -c PLACEHOLDER <output>` must return 0.
 - **Navigation is derived from the DOM** — it queries `.slide` elements and their `data-title`. There is NO positional `TITLES` array, `TOTAL` count, or `slide-N`/`toggle-N` ID to maintain. Add, remove, or reorder slides freely; the counter, TOC, hash routing, and details/code wiring all just work. Do not reintroduce positional bookkeeping.
@@ -94,7 +117,7 @@ Both templates ship an inline commenting feature, Confluence/Notion-style, so a 
 - **Select any text** anywhere in the content (a word, a sentence, a whole bullet, a code line — not limited to a fixed list of commentable elements) and a small **💬 Comment** bubble appears near the selection. Click it to open a popup, type a note, and save.
 - Saved comments persist in the browser's `localStorage`, keyed by the file's path, so they survive a reload of the same rendered file.
 - **Comments (N) button** opens a side panel listing every saved comment with its location (slide/section) and the exact quoted text, each deletable individually.
-- **"Copy for Claude Code"** in that panel formats all comments as a numbered plain-text list (`[location] on: "quote" → note`) and copies it to the clipboard in one click — paste directly into a Claude Code prompt instead of manually transcribing feedback.
+- **"Copy for Claude Code"** in that panel formats all comments as a numbered plain-text list (`[location] on: "quote" → note`) and copies it to the clipboard in one click — paste directly into a Claude Code prompt instead of manually transcribing feedback. Copying also auto-clears the saved comments, so the panel starts clean for the next round of review.
 - This is additive chrome living in its own `<script>`/`<style>` block appended after the invariant deck/page script — it does not touch hash routing, slide nav, or the details/summary disclosure logic. Do not remove it when filling content, and do not re-derive it per render (it's already correct in both templates).
 - Known limitation: the inline 💬 marker inserted at a comment's location does not survive a page reload (it's a plain DOM node, not persisted). The comment text, its location, and the export function are unaffected — only the in-place marker icon disappears on reload; the panel is always the reliable way to review everything saved.
 - Known limitation: the inline 💬 marker on a specific line does not survive a page reload (the underlying `data-cid` is assigned lazily on first comment and isn't stable across re-renders of the same HTML). The comment text itself, its location, and the export function are unaffected — only the in-place marker icon needs a fresh click-through via the panel to relocate.
@@ -304,7 +327,35 @@ If the brief doesn't override anything, render with the defaults. Never freelanc
 
 The brief's "Slide outline" section is the authoritative slide-by-slide content. Render slides in the order listed.
 
-This skill has no opinion on slide count, slide titles, or section structure — those are caller concerns. The skill DOES have opinions on how individual slides are rendered (progressive disclosure, code modals, navigation, hash routing).
+Slide titles and section structure are caller concerns. Slide *count* is not open-ended, though — **default to a lean deck** (see below). The skill also has opinions on how individual slides are rendered (progressive disclosure, code modals, navigation, hash routing).
+
+### Right-size the deck — default lean
+
+Bias toward fewer slides. Most requests want a tight arc, not an exhaustive one — and an over-long deck for a small ask is a real failure mode (a "basic" request that came back as 9 slides is the canonical example). A deck is too long when the audience couldn't restate its spine afterward.
+
+- **Default — an unqualified request, or one tagged "basic" / "simple" / "quick" / "short" / "rough": a lean deck.** Cover + roughly 3–6 content slides, covering only the essential arc (problem → key insight → what to do → next step). For `page` format: intent + ~3–5 sections.
+- **Only go large when the user explicitly asks** for a comprehensive / detailed / thorough / full / deep-dive presentation, or hands you a large source and says to cover all of it. Then expand freely.
+- **When a rich source tempts a big deck but the ask was small, keep the deck small and push depth into `▸ Details` panels** — collapsed detail is free; extra slides are not. Keep the happy-path spine short; everything else is one expand away.
+- If you genuinely can't tell whether the user wants lean or comprehensive and the source is large, **ask** — don't default to large.
+
+This is about **scope** (how many slides to include) and is the opposite axis from "Don't compress the source" below (which is about not merging items *within* a slide you've already chosen to keep). Reconcile them as: **few slides, each rendered in full** — never many thin slides, and never few slides that cram merged ranges.
+
+### Less is more — include only what serves the point
+
+The reason to render an artifact instead of dumping prose is to make the point **fast and parseable**. Restraint is the feature, not a compromise — the reader wants to grasp what you're saying without wading, and every section that doesn't carry the message is a tax on that.
+
+Include only the sections the message needs. A "what we're doing" explainer is usually **problem → why → what**, and nothing else. A status update is **what shipped → what's next**. Expand past that only when the content genuinely demands it.
+
+**Do not add decision-doc scaffolding unless the purpose is explicitly a decision doc AND the caller asked for those parts.** In an explainer or status they read as noise and actively overwhelm:
+- open questions / open decisions
+- future work / follow-ups / "later cleanup"
+- risks, caveats, trade-off ledgers
+- rejected-alternatives or "why not X" post-mortems
+- appendices, glossaries, cost breakdowns
+
+That material belongs in the source notes, not the rendered artifact. When unsure whether a section earns its place, leave it out — the caller can always ask for depth. This also scopes the "gets its own slide/section" rules below (Deliverables, Post-Day-1 roadmap): they fire only when that content actually exists in the source *and* the purpose calls for surfacing it — never manufacture them to look thorough.
+
+Test for each section before you keep it: **remove it — is the point still delivered?** If yes, it was scaffolding. (This is a scope rule — which sections to include — the same axis as "Right-size" above, and the opposite of "Don't compress the source" below, which is about rendering a kept section in full.)
 
 ### Don't compress the source
 
