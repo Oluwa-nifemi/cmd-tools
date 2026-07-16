@@ -5,8 +5,13 @@
 # skill frontmatter, so it is auto-scoped to orchestration and never runs in
 # normal sessions.
 #
-# LEAD ONLY: hook input carries agent_id/agent_type only inside a subagent.
-# Absent => lead (enforce). Present => teammate (allow).
+# LEAD ONLY — by nature: this PreToolUse hook fires for the MAIN session's tool
+# calls only. Subagent (teammate) tool calls do NOT reach it at all (verified
+# empirically), so teammates are inherently unrestricted — the skill relies on
+# that, not on per-call detection. The agent_id/agent_type allow below is just a
+# harmless defensive no-op: current payloads never carry those keys, but if a
+# future Claude Code ever DID run this hook for subagents with an agent marker,
+# it keeps them unblocked rather than misclassifying them as the lead.
 #
 # Blocks on lead:  large Reads, `git diff`, Edit/Write/NotebookEdit.
 # Allows on lead:  small Reads, git status/add/commit, everything else.
@@ -37,7 +42,9 @@ except Exception:
 
 tool = obj.get("tool_name", "")
 
-# Teammate? Allow everything.
+# Defensive no-op (see header): if a payload ever carries an agent marker,
+# treat it as a teammate and allow. Current payloads never do — the hook is
+# lead-only by nature — so this simply never fires today.
 if obj.get("agent_id") or obj.get("agent_type"):
     allow()
 

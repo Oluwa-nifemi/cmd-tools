@@ -16,7 +16,7 @@
 
 ## What the hook does
 - Runs ONLY while orchestrate-build is loaded (skill-frontmatter scope) — never in normal sessions.
-- LEAD ONLY: teammates (agent_id/agent_type present) are allowed everything.
+- LEAD ONLY *by nature*: this PreToolUse hook fires for the main session's tool calls only. Subagent (teammate) tool calls never reach it (verified empirically), so teammates are inherently unrestricted. The `agent_id`/`agent_type` allow-branch in the script is a harmless defensive no-op — current payloads never carry those keys.
 - On the lead, blocks: Edit/Write/NotebookEdit, `git diff`, and Reads over
   ORCHESTRATE_MAX_READ_BYTES (default 16000). Allows small reads + git status/add/commit.
 - No jq dependency (parses in Python3). Fails closed on write tools if input is unparseable.

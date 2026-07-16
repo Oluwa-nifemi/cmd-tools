@@ -31,7 +31,7 @@ This skill encodes a specific, hard-won workflow. Follow it as a runbook.
 ## The non-negotiables (read first)
 
 1. **Orchestrator never implements.** Never Edit/Write/NotebookEdit production code. Your job is: decompose, dispatch, read summaries, decide the next step, own the log + task state, bring the stack up, do light REPL/port introspection to verify. If you feel the urge to "just fix this one line," dispatch it instead.
-2. **Doer and reviewer are SEPARATE fresh-context agents.** A reviewer that inherits the doer's context inherits its blind spots. Independent review requires an independent (empty) context — always a fresh `Agent` spawn for each role.
+2. **Doer and reviewer are SEPARATE fresh-context agents.** A reviewer that inherits the doer's context inherits its blind spots. Independent review requires an independent (empty) context — always a fresh `Agent` spawn for each role. Give every spawn a `name` (so you can `SendMessage` it for fix-loops).
 3. **Fix-loops reuse the ORIGINAL doer via `SendMessage` — never kill/respawn.** The doer sits parked idle, addressable by name, holding full context of every file it touched. Messaging it back skips a costly re-discovery pass. Rule of thumb: *new capability / independent judgment → fresh spawn; continue or amend existing work → SendMessage the existing agent.*
 4. **One agent on a unit at a time. Strictly sequential per file.** Never let two agents touch the same file concurrently.
 5. **Doers do ONLY their assigned unit.** They must not touch the task list or claim other work (see the auto-claim gotcha below).
@@ -66,11 +66,11 @@ The dominant cost on a long build is the orchestrator re-reading a **growing** c
 
 A skill-scoped hook (see frontmatter) enforces this as a hard backstop — it blocks the lead from large file reads, `git diff`, and Edit/Write, while leaving teammates unrestricted. But treat the hook as the safety net; the design below is what makes reading unnecessary in the first place.
 
-1. **The index is the only thing the lead reads.** The orchestrator log's status table (Phase 1.2) is the index: `unit | doer | review | test | commit | state | section-pointer`. The **section-pointer** column records where each unit's report/review lives (heading or `reports.md` line). The lead reads this small table to route; it never scans a big file to find a section. Keep the table tight — it's the one artifact that legitimately re-enters context every turn, so it must stay small.
+1. **The index is the only thing the lead reads.** The orchestrator log's status table (Phase 1.2) is the index: `unit | doer | review | test | commit | state | report-file`. The **report-file** column records each unit's report/review FILENAME under `reports/`. The lead reads this small table to route; it never scans a big file to find a section. Keep the table tight — it's the one artifact that legitimately re-enters context every turn, so it must stay small.
 
 2. **Log: append blind, never re-read.** Update the orchestrator log by **appending** (a new dated line, a status-table row edit) — do NOT read the whole log back to update it. Reading the log to append to it is what makes an append-only file grow *and* get re-read every unit. The lead already knows what it just did; it appends that, full stop. Read a specific past section only via the index, and only if acting on it — never the whole log.
 
-3. **Reviews/reports: the lead NEVER reads them.** Every doer/reviewer writes its full report into **one shared `<build-folder>/reports.md`**, appending a clearly-headed section (e.g. `## <unit>-<role> — <what>`), and records the section pointer in the index. It sends the orchestrator only a **verdict + pointer** via `SendMessage` (`clean` → advance; `changes needed → §<pointer>`). On "changes needed," the lead does NOT open the review — it forwards the pointer to the doer ("read §<pointer> and fix"). The **doer** reads the review, in its own context. A clean verdict never touches a file; a dirty one is a pointer relay. The lead never needs the findings' content — routing a verdict is the whole decision. (This is an autonomous run: if the human later wants detail, a throwaway audit agent reads the logs/reviews on demand — see Phase 3. That is not the lead's job, ever.)
+3. **Reviews/reports: the lead NEVER reads them.** Every doer/reviewer writes its full report into its **own** file, `<build-folder>/reports/<unit>-<role>.md` (created fresh, one file per agent — never a shared file to append to), and records the report filename in the index. It sends the orchestrator only a **verdict + filename** via `SendMessage` (`clean` → advance; `changes needed → reports/<unit>-reviewer.md`). On "changes needed," the lead does NOT open the review — it forwards the filename to the doer ("read reports/<unit>-reviewer.md and fix"). The **doer** reads the review, in its own context. A clean verdict never touches a file; a dirty one is a filename relay. The lead never needs the findings' content — routing a verdict is the whole decision. (This is an autonomous run: if the human later wants detail, a throwaway audit agent reads the logs/reviews on demand — see Phase 3. That is not the lead's job, ever.)
 
 4. **Static files: hold paths, not content.** Conventions pack, spec, design docs, guardrails — the lead holds the **path** and passes it to the doer/reviewer, who read the content in their throwaway contexts. The only time the lead reads static content is the rare Phase 0.4 case of distilling a *new* conventions pack (read source docs once to write it). After that write, never again — just pass the path.
 
@@ -102,7 +102,7 @@ Appends to shared files are safe: the pipeline is sequential per unit (non-negot
 
 1. **Verify the worktree/branch.** Confirm you're building in the intended worktree (not the main checkout), on the intended branch. Check `git status` / recent commits.
 2. **Create the orchestrator log** early: `local/<task>/orchestrator-log.md`. This is your **index** — the one artifact you re-read to route. Keep it scannable:
-   - a **status table** (unit | doer | review | test | commit | state | **section-pointer**) — the section-pointer column records where each unit's report/review section lives in `reports.md` (heading or line), so you can forward a pointer without ever scanning the file,
+   - a **status table** (unit | doer | review | test | commit | state | **report-file**) — the report-file column records each unit's report/review FILENAME under `reports/`, so you can forward a filename without ever scanning the file,
    - **dated steering notes** (every sequencing/decision made on the user's behalf),
    - an **incidents** section (agent-health, concurrency violations, retries),
    - a **flags for user** section.
@@ -125,7 +125,17 @@ The prompt should contain:
 - A pointer to the **convention pack file(s)** (from Phase 0.4 — the persistent `.claude/orchestrate-build/conventions.md` plus any per-build supplement) with an instruction to read them first. This is the load-bearing quality lever — front-loading the rules is what stops the reviewer re-flagging the same convention miss every unit. Passing the path (not the content) keeps your own context lean across many dispatches. If the reviewer keeps catching the same class of issue across units, the pack file is missing a rule: edit the file so later doers get it up front, rather than fixing the instance and moving on.
 - Tests: "write tests for this unit and RUN them (via the project's test workflow, e.g. nREPL) before reporting; report the actual pass/fail output." If the doer is on Haiku and reports it couldn't run tests, don't take that at face value — spot-check it yourself before accepting the unit as blocked (see Model tiering).
 - A pointer to the **guardrails file** `.claude/orchestrate-build/guardrails.md` with an instruction to follow it. Do NOT paste the guardrail block into the prompt — pasting ~80 tokens of boilerplate into every unit's dispatch is output tokens spent now that then sit in your context all run (see Token economy, point 6). The file contains, verbatim:
-  > "Do ONLY this task. Do NOT call TaskList/TaskUpdate or claim/start any other task. Do NOT spawn further sub-agents — do the work yourself. Do NOT delete the existing/legacy code path. When done, append your full report (files changed, what you did, actual test output, anything you were unsure about) as a new dated section to `<build-folder>/reports.md` (create it if it doesn't exist yet), then send a SHORT summary via SendMessage(to:'main') — verdict, one-line test result, and the section heading/line as your pointer. Do not paste the full report into the message. Then stand down and remain idle."
+  > "Do ONLY this task. Do NOT call TaskList/TaskUpdate or claim/start any other task.
+  > Do NOT spawn further sub-agents — do the work yourself. Do NOT delete the
+  > existing/legacy code path. When done, write your full report (files changed,
+  > what you did, actual test output, anything you were unsure about) to your OWN
+  > report file `<build-folder>/reports/<unit>-<role>.md` (e.g.
+  > `reports/unit3-auth-doer.md`) — one file per agent, which you create fresh and
+  > own, so you never overwrite another agent's file or hit the "read before
+  > overwrite" rule on a shared file. Then send a SHORT summary via
+  > SendMessage(to:'main') — verdict, one-line test result, and your report
+  > filename as the pointer. Do not paste the full report into the message. Then
+  > stand down and remain idle."
   If the file doesn't exist yet (first build in the repo), write it once from the block above, then point at it thereafter.
 
 ### 2b. Review (fresh `Agent`, sonnet) — code units only
@@ -137,11 +147,11 @@ Skip this whole step for non-code artifacts (decks/docs/prose): verify those by 
 
 Findings ranked by severity, concrete and actionable — not a rubber stamp. (Only split into two separate reviewers for an unusually large or crux unit where one context can't do both justice — rare.)
 
-Same reporting rule as the doer: full findings get appended as a new section to `<build-folder>/reports.md`, and `SendMessage(to:'main')` gets only a **verdict + pointer** — `clean` (→ advance), or `changes needed → §<section-heading/line>`. Do NOT paste findings into the message, and do NOT expect the orchestrator to read them: on "changes needed" the orchestrator forwards the pointer to the doer, and the **doer** reads the review section. The orchestrator never opens a review — routing the verdict is its entire job here (see Token economy, point 3).
+Same reporting rule as the doer: full findings get written to its own fresh file `<build-folder>/reports/<unit>-reviewer.md`, and `SendMessage(to:'main')` gets only a **verdict + filename** — `clean` (→ advance), or `changes needed → reports/<unit>-reviewer.md`. Do NOT paste findings into the message, and do NOT expect the orchestrator to read them: on "changes needed" the orchestrator forwards the filename to the doer, and the **doer** reads the review file. The orchestrator never opens a review — routing the verdict is its entire job here (see Token economy, point 3).
 
 ### 2c. Fix-loop (SendMessage the ORIGINAL doer)
 
-Forward the review **pointer** (not the findings) to the same doer via `SendMessage` — "read §<pointer> in reports.md and fix." The doer reads the review in its own context and amends its own work (keeps context, no re-discovery). You never read the review yourself. Re-run the relevant review if the fixes are substantial. Repeat until the review verdict is clean. Never spawn a fresh agent for fixes to existing work.
+Forward the review **filename** (not the findings) to the same doer via `SendMessage` — "read reports/<unit>-reviewer.md and fix." The doer reads the review in its own context and amends its own work (keeps context, no re-discovery). You never read the review yourself. Re-run the relevant review if the fixes are substantial. Repeat until the review verdict is clean. Never spawn a fresh agent for fixes to existing work.
 
 ### 2d. Test verification
 
