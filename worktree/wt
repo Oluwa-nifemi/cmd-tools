@@ -337,7 +337,10 @@ wt() {
   # Globs are evaluated against the main worktree.
   local pattern match rel
   for pattern in ${=WT_LINK_IGNORED}; do
-    for match in $root/${~pattern}(N); do
+    # `**/` makes each glob recurse into subdirectories (zsh extended glob),
+    # so nested files like `apps/foo/.env` get linked too, not just top-level
+    # matches. (N) suppresses "no match" errors when a pattern hits nothing.
+    for match in $root/**/${~pattern}(N D); do
       rel="${match#$root/}"
       mkdir -p "$(dirname "./$rel")"
       if [[ -d "$match" ]]; then
