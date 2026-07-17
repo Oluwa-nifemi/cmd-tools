@@ -340,7 +340,11 @@ wt() {
     # `**/` makes each glob recurse into subdirectories (zsh extended glob),
     # so nested files like `apps/foo/.env` get linked too, not just top-level
     # matches. (N) suppresses "no match" errors when a pattern hits nothing.
-    for match in $root/**/${~pattern}(N D); do
+    # The `^e:...:` qualifier excludes anything under .git or node_modules —
+    # those trees are huge and never hold env files, so walking them on every
+    # `wt create` is pure wasted time. (zsh glob qualifiers: `e:cmd:` keeps
+    # matches where cmd is true against $REPLY; a leading `^` negates it.)
+    for match in $root/**/${~pattern}(ND^e:'[[ $REPLY == */.git/* || $REPLY == */node_modules/* ]]':); do
       rel="${match#$root/}"
       mkdir -p "$(dirname "./$rel")"
       if [[ -d "$match" ]]; then
