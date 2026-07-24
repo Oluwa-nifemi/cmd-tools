@@ -1,7 +1,7 @@
 ---
 name: gs
 description: Stacked branch workflow tool. Use when the user wants to manage stacked git branches, commit with upstack propagation, navigate branch stacks, or track existing branches into a stack.
-user-invocable: false
+user-invocable: true
 ---
 
 # gs (git-stack)
