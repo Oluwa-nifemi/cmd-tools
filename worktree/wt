@@ -1,7 +1,8 @@
 # wt — git worktree manager
 #
 # Creates worktrees in a configured base directory, hard-links a configurable
-# set of ignored files (CLAUDE.local.md, .env*, …) from the main worktree,
+# set of ignored files/directories (CLAUDE.md, CLAUDE.local.md, .claude, .env*, …)
+# from the main worktree,
 # then cds in the new one.
 #
 # Configuration is via env vars; both can be set in your shell rc:
@@ -9,10 +10,10 @@
 #                     once and it'll write the export into ~/.zshrc for you)
 #   WT_LINK_IGNORED   space-separated globs, relative to the main worktree,
 #                     that get hard-linked into each new worktree
-#                     (default: "CLAUDE.local.md .env* .rtk")
+#                     (default: "CLAUDE.md CLAUDE.local.md .claude .env* .rtk")
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
-: "${WT_LINK_IGNORED:=CLAUDE.local.md .env* .rtk}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk}"
 
 wt() {
   if [[ -z "$1" || "$1" == "--help" || "$1" == "-h" ]]; then

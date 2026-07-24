@@ -10,7 +10,7 @@ A shell function for creating and managing git worktrees with minimal friction. 
 
 ## How it works
 
-`wt` creates worktrees in a configured base directory (`WT_WORKTREES_DIR/<repo-name>/<branch-name>`), hard-links configurable ignored files (`CLAUDE.local.md`, `.env*`, etc.) from the main worktree into each new one, and `cd`s in.
+`wt` creates worktrees in a configured base directory (`WT_WORKTREES_DIR/<repo-name>/<branch-name>`), hard-links configurable ignored files (`CLAUDE.md`, `CLAUDE.local.md`, `.env*`, etc.) from the main worktree into each new one, and `cd`s in.
 
 Files are **hard-linked** (same inode), so edits in any worktree are visible everywhere. This is intentional — these are shared config files. Directories in the glob list get **symlinked** (macOS can't hard-link directories).
 
@@ -21,7 +21,7 @@ Configuration is via environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `WT_WORKTREES_DIR` | Base directory for all worktrees | Must be set (via `wt install`) |
-| `WT_LINK_IGNORED` | Space-separated globs to hard-link from main worktree | `CLAUDE.local.md .env*` |
+| `WT_LINK_IGNORED` | Space-separated globs to hard-link from main worktree | `CLAUDE.md CLAUDE.local.md .claude .env* .rtk` |
 
 ```bash
 # Source it (add to .zshrc)

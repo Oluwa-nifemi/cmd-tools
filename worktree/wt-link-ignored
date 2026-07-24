@@ -1,0 +1,102 @@
+#!/usr/bin/env zsh
+#
+# Link the same ignored/shared files into an already-created git worktree.
+#
+# Codex creates managed worktrees itself, so it cannot use `wt create` directly
+# without taking over branch/worktree lifecycle. This helper keeps only the
+# useful post-create part: bring local config over from the main worktree using
+# the same WT_LINK_IGNORED environment variable as `wt`.
+
+set -uo pipefail
+
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk}"
+: "${WT_CODEX_LINK_IGNORED:=local AGENTS.md .codex .agents}"
+: "${WT_LINK_IGNORED_RECURSIVE:=0}"
+
+current_worktree="$(git rev-parse --show-toplevel)"
+main_worktree="$(git worktree list --porcelain | awk '/^worktree / { print $2; exit }')"
+
+if [[ -z "$main_worktree" ]]; then
+  echo "wt-link-ignored: could not detect main worktree" >&2
+  exit 1
+fi
+
+if [[ "$current_worktree" == "$main_worktree" ]]; then
+  echo "wt-link-ignored: current directory is the main worktree; nothing to link"
+  exit 0
+fi
+
+cd "$current_worktree"
+
+typeset -A linked_paths
+
+# Match the useful `wt create` behavior for Codex-managed worktrees: bring over
+# the shared ignored/local paths after Codex has created the worktree. Unlike
+# `wt create`, default to top-level matches only; a recursive `**/.env*` scan is
+# fine in smaller repos but can hang setup for monorepos. Set
+# WT_LINK_IGNORED_RECURSIVE=1 if a repo genuinely needs nested ignored files.
+for pattern in ${=WT_LINK_IGNORED} ${=WT_CODEX_LINK_IGNORED}; do
+  matches=($main_worktree/${~pattern}(ND))
+
+  if [[ "$WT_LINK_IGNORED_RECURSIVE" == "1" ]]; then
+    matches+=($main_worktree/**/${~pattern}(ND^e:'[[ $REPLY == */.git/* || $REPLY == */node_modules/* ]]':))
+  fi
+
+  for match in $matches; do
+    relative_path="${match#$main_worktree/}"
+    target_path="./$relative_path"
+
+    if [[ -n "${linked_paths[$relative_path]:-}" ]]; then
+      continue
+    fi
+    linked_paths[$relative_path]=1
+
+    if [[ -e "$target_path" || -L "$target_path" ]]; then
+      # Codex may create the worktree from a branch where some of these names
+      # are real tracked files already (CLAUDE.md is the common case). Those
+      # should be left alone; the helper is only responsible for bringing over
+      # ignored/local state that Git would not normally populate.
+      if [[ "$target_path" -ef "$match" ]] ||
+         [[ "$(readlink "$target_path" 2>/dev/null || true)" == "$match" ]] ||
+         [[ -f "$match" && -f "$target_path" && ! -L "$target_path" && ! -L "$match" && "$(cmp -s "$match" "$target_path"; echo $?)" -eq 0 ]] ||
+         git ls-files --error-unmatch -- "$relative_path" >/dev/null 2>&1; then
+        continue
+      fi
+
+      if [[ -d "$match" && -d "$target_path" && ! -L "$target_path" ]]; then
+        # Codex can pre-populate ignored directories before this setup script
+        # runs. For `local/` that defeats the point of this helper: future notes
+        # would land in the disposable worktree instead of the canonical main
+        # worktree. Only replace the directory when every existing file is also
+        # present in the main worktree, so we do not delete unique worktree-only
+        # state by accident.
+        has_unique_existing_path=0
+        for existing_path in "$target_path"/**/*(ND); do
+          existing_relative_path="${existing_path#$target_path/}"
+          source_existing_path="$match/$existing_relative_path"
+          if [[ ! -e "$source_existing_path" && ! -L "$source_existing_path" ]]; then
+            has_unique_existing_path=1
+            break
+          fi
+        done
+
+        if [[ "$has_unique_existing_path" -eq 0 ]]; then
+          rm -rf "$target_path"
+        else
+          echo "wt-link-ignored: refusing to replace directory with unique worktree-only paths: $relative_path" >&2
+          exit 1
+        fi
+      else
+        echo "wt-link-ignored: refusing to overwrite existing path: $relative_path" >&2
+        exit 1
+      fi
+    fi
+
+    mkdir -p "$(dirname "$target_path")"
+    if [[ -d "$match" || "$relative_path" == "AGENTS.md" ]]; then
+      ln -s "$match" "$target_path"
+    else
+      ln "$match" "$target_path"
+    fi
+  done
+done
