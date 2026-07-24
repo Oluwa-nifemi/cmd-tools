@@ -1,18 +1,18 @@
 ---
 name: presentation
-description: Render a self-contained HTML artifact from caller-provided content, in one of two formats — a slide `deck` (multi-slide, hash-routed, for live presenting/tech talks) or a one-page `page` (scrollable, anchor-TOC, nested collapsible sections, for scoped docs/handoffs). Editorial/typewriter aesthetic shared by both. Designed to be invoked by other skills (e.g. /research, codebase tour, sprint retro, /handoff) — the caller composes a presentation brief and this skill renders the chosen format. Triggers when the user says "render the deck", "make the presentation", "present the deck", "tech talk" → deck; "one-pager", "quick scoped page", "single page", "scoped doc", "for reference/handoff" → page; or a calling skill invokes this skill explicitly.
+description: Render a self-contained HTML artifact from caller-provided content, in one of two formats — a slide `deck` (multi-slide, hash-routed, for live presenting/tech talks) or a one-page `page` (scrollable, anchor-TOC, always-visible sections with scannable callouts/stat-cards/tables, for scoped docs/handoffs). Editorial/typewriter aesthetic shared by both. Designed to be invoked by other skills (e.g. /research, codebase tour, sprint retro, /handoff) — the caller composes a presentation brief and this skill renders the chosen format. Triggers when the user says "render the deck", "make the presentation", "present the deck", "tech talk" → deck; "one-pager", "quick scoped page", "single page", "scoped doc", "for reference/handoff" → page; or a calling skill invokes this skill explicitly.
 ---
 
 # presentation
 
-Generates a single self-contained HTML artifact from a caller-provided brief, in one of two formats: a **deck** (hash-routed slides) or a **page** (one scrollable document). Editorial/typewriter aesthetic, progressive-disclosure expandable content, shared between both.
+Generates a single self-contained HTML artifact from a caller-provided brief, in one of two formats: a **deck** (hash-routed slides) or a **page** (one scrollable document). Editorial/typewriter aesthetic shared between both. Decks use slide-level progressive disclosure; pages are **always-visible and scannable** (see "Page mode is scroll-and-scan, not click-to-reveal").
 
 ## Format modes: deck vs page
 
 Two renderer outputs, one shared aesthetic:
 
 - **deck** — multi-slide, hash-routed (`#page-N`), built for live presenting/tech talks where a presenter walks an audience through slides at their own pace. Uses `template.html`. Slide-level progressive disclosure (`▸ Details`), code modals, slide counter, TOC overlay.
-- **page** — one scrollable document meant to be read at the reader's own pace, not presented live. Uses `page-template.html`. Anchor-link TOC (`href="#section-id"`), two-level native `<details>/<summary>` disclosure, no slide chrome.
+- **page** — one scrollable document meant to be read at the reader's own pace, not presented live. Uses `page-template.html`. Anchor-link TOC (`href="#section-id"`), **always-visible `<section>` blocks** (no click-to-open), scannable primitives (callouts, stat cards, pills, tables), no slide chrome. See "Page mode is scroll-and-scan, not click-to-reveal".
 
 The renderer branches on the brief's `format` field (see `brief-format.md`). Everything else in this file that's deck-specific is marked as such; content-authoring principles (don't compress the source, verify claims, real SVGs, etc.) apply to both formats.
 
@@ -78,8 +78,8 @@ The full protocol above (brief file → dispatched sub-agent → `frontend-desig
 
 Quick-path steps — you, the calling agent: no sub-agent, no `frontend-design`, no `agent-browser`:
 1. Copy `page-template.html` to the output path.
-2. Fill the content: title/subtitle, the anchor-TOC (one link per section), and the `<details class="section">` sections between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->`. Leave the `<style>`/`<script>` chrome untouched. Follow the content principles in this file — especially "Less is more".
-3. Replace the placeholders (`grep -c PLACEHOLDER <output>` must return 0) and run the page verification grep: `grep -E '<base target="_blank"|class="toc"|<details class="section"|@media print|export-btn' <output>` — all five must appear. That grep is the whole check: no screenshots, because there's no SVG and the chrome is correct by construction.
+2. Fill the content: title/subtitle, the anchor-TOC (one link per section), and the `<section class="section">` blocks between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->`. Sections are always visible — do NOT wrap them in `<details>`. Put supporting "why/how"/caveats in an always-visible `<aside class="callout">`, surface numbers with `.statgrid`/`.stat`, and use `.pill` status labels and plain tables. Leave the `<style>`/`<script>` chrome untouched. Follow the content principles in this file — especially "Page mode is scroll-and-scan, not click-to-reveal" and "Less is more".
+3. Replace the placeholders (`grep -c PLACEHOLDER <output>` must return 0) and run the page verification grep: `grep -E '<base target="_blank"|class="toc"|<section class="section"|@media print|export-btn' <output>` — all five must appear. Then confirm you did NOT reintroduce click-to-reveal sections: `grep -c 'details class="section"' <output>` must return 0. That's the whole check when there's no SVG; screenshot any slide/section that contains an SVG or a hand-built dense layout.
 
 If any criterion fails — a deck, comprehensive size, a custom SVG, a large multi-source corpus, or an existing file to reconcile — use the full sub-agent protocol above. When unsure, use the full path.
 
@@ -87,7 +87,7 @@ If any criterion fails — a deck, comprehensive size, a custom SVG, a large mul
 
 **Two correct-by-construction skeletons — pick by format: `template.html` for a `deck`, `page-template.html` for a `page`.** Neither is the default; the format decision (above) picks one. Both already contain every hard invariant, the shared `:root` aesthetic tokens, and reusable component patterns. **Copy the right one to the output path and fill only the content; leave the CSS and JS untouched.**
 
-The rules below name deck structures (`.slide`, the `<!-- SLIDES:END -->` marker); the page equivalents are top-level `<details class="section">` blocks between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->` (see "Page-mode invariants"). The *principle* — copy skeleton, fill content, never touch the chrome — is identical for both. For a `deck`, `template.html` carries base target, hash routing, print stylesheet, export button, nav/TOC, details toggles, and code modal; copy it and leave everything below `<!-- SLIDES:END -->` untouched.
+The rules below name deck structures (`.slide`, the `<!-- SLIDES:END -->` marker); the page equivalents are top-level `<section class="section">` blocks between `<!-- SECTIONS:START -->` / `<!-- SECTIONS:END -->` (see "Page-mode invariants"). The *principle* — copy skeleton, fill content, never touch the chrome — is identical for both. For a `deck`, `template.html` carries base target, hash routing, print stylesheet, export button, nav/TOC, details toggles, and code modal; copy it and leave everything below `<!-- SLIDES:END -->` untouched.
 
 Deck rules:
 - Each slide is `<section class="slide" data-title="Short TOC label"> … </section>`. The cover is the first slide (add class `cover`).
@@ -102,13 +102,37 @@ These apply to **page mode only**. They are the page equivalents of the deck's m
 
 - **`<base target="_blank">`** in `<head>` — same reasoning as deck: a reader clicking a link should never lose their place.
 - **Anchor-link TOC** — `<nav class="toc">` with plain `href="#section-id"` links, one per top-level section. Not hash-routed; the browser's native anchor scroll handles navigation.
-- **Two-level `<details>/<summary>` disclosure** — top-level `<details class="section" id="...">` sections, each optionally containing nested `<details class="sub">` sub-items. No custom JS toggle logic; the browser's native disclosure behavior is the mechanism.
-- **Print stylesheet + Export button** — `@media print` forces every `<details>` open (collapsed content must not be lost in the PDF), hides the TOC and export button, and lets the browser paginate the flattened document naturally — no `break-after`/pagination hacks. An `.export-btn` calls `window.print()` directly, same pattern as the deck.
+- **Always-visible `<section class="section" id="...">` blocks** — the section body is shown as soon as the reader scrolls to it. There is NO click-to-open on a section, and there is NO nested `details.sub` dropdown. This is the deliberate difference from a deck: a page is read by scrolling, so hiding its content behind clicks is a mis-fit (it forces interaction and still leaves text walls once opened). See "Page mode is scroll-and-scan, not click-to-reveal" for the primitives that replace nested dropdowns.
+- **Optional collapse is `<details class="fold">` only** — one shallow, opt-in collapse reserved for genuinely long AND genuinely optional appendix material (a raw dump, a full transcript). It is NOT the default and must never nest inside another fold. Supporting "why/how"/caveats belong in an always-visible `.callout`, not a fold.
+- **Print stylesheet + Export button** — `@media print` forces every `<details class="fold">` open (collapsed content must not be lost in the PDF), hides the TOC and export button, and lets the browser paginate the flattened document naturally — no `break-after`/pagination hacks. An `.export-btn` calls `window.print()` directly, same pattern as the deck.
 - **No remote dependencies** beyond what the deck allows (highlight.js CDN, only if the brief calls for code blocks).
 
-Explicitly NOT part of page mode (these are deck-only, see "Mandatory invariants" below): hash routing / `window.location.hash`, a slide counter, per-slide prev/next nav, the TOC *overlay* (page mode's TOC is inline in the flow, not an overlay).
+Explicitly NOT part of page mode (these are deck-only, see "Mandatory invariants" below): hash routing / `window.location.hash`, a slide counter, per-slide prev/next nav, the TOC *overlay* (page mode's TOC is inline in the flow, not an overlay), and slide-style progressive disclosure (page mode is always-visible by design).
 
 The "don't compress the source" rule and every content-quality principle later in this file (density, real SVGs, verify claims, etc.) apply to page mode exactly as they do to deck mode — only the chrome differs.
+
+## Page mode is scroll-and-scan, not click-to-reveal
+
+A page is read by scrolling top-to-bottom, so its content must be **visible while scanning** — never hidden behind a click. Page mode used to lean on nested `<details>` dropdowns (a top-level collapsible section, plus `details.sub` sub-dropdowns for the "why/how"). That was wrong twice over: it forced the reader to click just to see the body, and the revealed content was still a wall of prose. This section is the fix.
+
+**The rules:**
+
+- **Sections are always visible.** A top-level section is `<section class="section" id="...">` with an `<h2 class="section-head">` — never a `<details>`. Do not wrap a section in a collapsible. The reader scrolls to it and reads it; there is no toggle.
+- **Kill the nested "sub" dropdown.** The supporting material that used to live in `details.sub` — the deeper why/how, a caveat, a rejected alternative, a confirmation note — goes in an **always-visible `<aside class="callout">`**. It stays on the page, visually de-emphasized by a left rule + tinted background, so the reader absorbs it while scanning. Three variants:
+  - `<aside class="callout">` — neutral context.
+  - `<aside class="callout callout-accent">` — a decision, good news, or confirmation (green).
+  - `<aside class="callout callout-warn">` — a caveat, pivot, or gotcha (amber).
+  - Optional `<span class="callout-label">WHY</span>` (or `HOW` / `CAVEAT` / `DECISION`) as the first child gives it a one-word tag.
+- **`<details class="fold">` is the *only* remaining collapse, and it's a last resort.** Use it only when material is BOTH long AND optional — an appendix-grade raw log, a full transcript, an exhaustive reference table nobody needs on first read. If content is short, or load-bearing, or answers an obvious "why?", make it a callout instead. Never nest a fold in a fold. If a page has more than one or two folds, you are probably over-hiding — convert them to callouts.
+- **Fight text-heaviness with primitives, not paragraphs.** This is the other half of the complaint: pages ended up text-heavy even after opening the dropdowns. Before writing a third paragraph in a section, ask whether it should be:
+  - a **stat row** — `<div class="statgrid"><div class="stat"><div class="stat-value">…</div><div class="stat-label">…</div></div>…</div>` — for key numbers, tunable knobs, or headline metrics.
+  - a **table** — plain `<table>` inside `.section-body` (styling is automatic) — for mappings, comparisons, or before/after.
+  - **pills** — `<span class="pill pill-good|pill-warn|pill-bad">…</span>` — for inline status labels.
+  - an **SVG diagram** — for flows, layers, sequences, or topology (see "Visual explanations with SVG"). A labelled diagram beats three paragraphs describing the same relationship.
+  - a **callout** — for the one supporting aside that isn't a number, table, or diagram.
+- **Lead with the point, support with a primitive.** Each section: one or two plain sentences stating the takeaway, then the scannable element that carries the detail. Reserve long prose for genuinely narrative passages.
+
+These primitives are all guaranteed by `page-template.html` — they are styled in its `<style>` block and demonstrated in the sample section. Use them; do not re-author their CSS.
 
 ## Reviewer comments (both formats — guaranteed by both templates, do not re-author)
 

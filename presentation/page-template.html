@@ -6,7 +6,8 @@
   This is the PAGE format (deck's sibling): a single scrollable document meant
   to be read at the reader's own pace, not presented live. No slides, no hash
   routing, no slide counter, no per-slide nav. Structure is: header -> anchor
-  TOC -> nested <details> sections, generalized from a real one-page epic doc.
+  TOC -> ALWAYS-VISIBLE <section> blocks. The reader scrolls; they never have to
+  click to reveal the body of a section.
 
   This file already satisfies every PAGE invariant in SKILL.md:
     - <base target="_blank" /> in <head>
@@ -16,24 +17,36 @@
     - <header> with title + subtitle + optional meta line
     - <nav class="toc"> of plain anchor links (href="#section-id") — NOT
       hash-routed slides
-    - two-level native <details>/<summary> disclosure (no custom JS toggle
-      logic — the browser handles open/close for free)
+    - always-visible <section class="section" id="..."> blocks (NO click-to-open
+      on the section itself — the body is always shown when you scroll to it)
+    - scannable content primitives: .callout (always-visible aside for the
+      "why/how"/caveat that USED to be buried in a nested dropdown), .statgrid
+      /.stat cards for key numbers, .pill status labels, and plain tables — use
+      these instead of paragraphs, and instead of collapsing content away
+    - <details class="fold"> is the ONE remaining opt-in collapse, reserved for
+      genuinely long, genuinely optional appendix-grade material (a raw dump, a
+      full transcript). Default to NOT using it. Never nest a fold in a fold.
     - @media print stylesheet that flattens the whole document: forces every
-      <details> open, hides the TOC, no pagination hacks — plus an
+      <details class="fold"> open, hides the TOC, no pagination hacks — plus an
       Export-to-PDF button calling window.print()
 
   HOW TO USE:
     1. Replace TITLE_PLACEHOLDER and SUBTITLE_PLACEHOLDER in <head> and
        <header> (and the optional meta line — delete it if unused).
     2. Replace the TOC links with one anchor per top-level section you add.
-    3. Replace the single sample section between <!-- SECTIONS:START --> and
-       <!-- SECTIONS:END --> with your real content. Each top-level section is:
-         <details class="section" id="your-anchor-id" open>
-           <summary class="section-head"><h2>Section title</h2></summary>
-           <div class="section-body"> ... nested <details class="sub"> ... </div>
-         </details>
-       Nest sub-items as <details class="sub"><summary>...</summary>...</details>
-       inside the section body — same two-level pattern as the sample.
+    3. Replace the single sample section between the SECTIONS:START and
+       SECTIONS:END markers (below) with your real content. Each section is:
+         <section class="section" id="your-anchor-id">
+           <h2 class="section-head">Section title</h2>
+           <div class="section-body"> ...always-visible content... </div>
+         </section>
+       For the "why/how", a caveat, or a rejected alternative that you'd have
+       buried in a nested dropdown before: use an always-visible callout —
+         <aside class="callout"><b>Why:</b> ...</aside>            (neutral)
+         <aside class="callout callout-accent">...</aside>          (good/decision)
+         <aside class="callout callout-warn">...</aside>            (caveat/pivot)
+       Only reach for <details class="fold"> when the material is long AND
+       optional (an appendix). If in doubt, leave it expanded as a callout.
     4. Do NOT rewrite the CSS. Only override :root tokens if the brief's
        "Aesthetic overrides" says so — and if you do, consider whether
        template.html (deck) should get the same override for consistency.
@@ -114,7 +127,7 @@
   }
   nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
 
-  details.section {
+  section.section {
     margin-bottom: 1.25rem;
     scroll-margin-top: 1rem;
     background: #fff;
@@ -122,64 +135,97 @@
     border-radius: 6px;
     padding: 0.9rem 1.2rem;
   }
-  details.section > summary.section-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    cursor: pointer;
-    list-style: none;
-  }
-  details.section > summary.section-head::-webkit-details-marker { display: none; }
-  details.section > summary.section-head::before {
-    content: '▸';
-    font-family: var(--font-mono);
-    color: var(--accent);
-    margin-right: 0.2rem;
-  }
-  details.section[open] > summary.section-head::before { content: '▾'; }
-  details.section[open] > summary.section-head {
-    border-bottom: 2px solid var(--ink);
-    padding-bottom: 0.6rem;
-    margin-bottom: 0.9rem;
-  }
-  .section-head h2 {
+  /* The section head is always visible — no click-to-open. A small accent tick
+     precedes the title purely as a visual marker, not an affordance. */
+  h2.section-head {
     font-family: var(--font-display);
     font-size: 1.3rem;
-    margin: 0;
-    display: inline;
+    margin: 0 0 0.9rem;
     font-weight: 600;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 0.6rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+  }
+  h2.section-head::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 0.3rem;
+    align-self: stretch;
+    background: var(--accent);
+    border-radius: 2px;
   }
 
   .section-body p, .section-body li { font-size: 0.95rem; }
+  .section-body > :first-child { margin-top: 0; }
+  .section-body > :last-child { margin-bottom: 0; }
 
-  details.sub {
+  /* ── Callout: the always-visible replacement for the old nested dropdown. ──
+     Use for the "why/how", a caveat, a rejected alternative — the supporting
+     material that used to be a click away. It stays on the page, visually
+     de-emphasized by a left rule + tinted background, so the reader gets it
+     while scanning without any interaction. */
+  .callout {
+    display: block;
+    background: var(--paper-2);
+    border-left: 3px solid var(--ink-faint);
+    border-radius: 0 4px 4px 0;
+    padding: 0.6rem 0.9rem;
+    margin: 0.8rem 0;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+  }
+  .callout > :first-child { margin-top: 0; }
+  .callout > :last-child { margin-bottom: 0; }
+  .callout p, .callout li { font-size: 0.9rem; color: var(--ink-soft); margin: 0.3rem 0; }
+  .callout b, .callout strong { color: var(--ink); }
+  .callout-accent { border-left-color: var(--accent); background: var(--accent-soft); }
+  .callout-warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout-label { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 0.25rem; }
+  .callout-accent .callout-label { color: var(--accent); }
+  .callout-warn .callout-label { color: var(--warn); }
+
+  /* ── Stat cards: surface key numbers/knobs as a scannable row, not prose. ── */
+  .statgrid { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.9rem 0; }
+  .stat { flex: 1 1 8rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; }
+  .stat .stat-value { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; color: var(--ink); line-height: 1.1; }
+  .stat .stat-label { font-size: 0.8rem; color: var(--ink-faint); margin-top: 0.2rem; }
+
+  /* ── Pill: inline status label (good / warn / bad / neutral). ── */
+  .pill { display: inline-block; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.04em; padding: 0.15em 0.55em; border-radius: 999px; border: 1px solid var(--rule); vertical-align: middle; }
+  .pill-good { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .pill-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+  .pill-bad  { background: #f5eaea; color: #9a3a3a; border-color: #9a3a3a; }
+
+  /* ── Plain tables: for mappings / comparisons. ── */
+  .section-body table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.92rem; }
+  .section-body th { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 2px solid var(--rule); font-family: var(--font-display); }
+  .section-body td { padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+
+  /* ── Fold: the ONE remaining opt-in collapse, for long/optional appendix
+     material only. Default to NOT using it — prefer a .callout. Never nest. ── */
+  details.fold {
     background: var(--paper-2);
     border: 1px solid var(--rule);
     border-radius: 4px;
-    margin-bottom: 0.6rem;
+    margin: 0.8rem 0;
     padding: 0.55rem 0.9rem;
   }
-  details.sub > summary {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    cursor: pointer;
-    list-style: none;
-    font-size: 0.92rem;
-    padding: 0.25rem 0;
-    font-weight: 600;
+  details.fold > summary {
+    display: flex; align-items: center; gap: 0.6rem;
+    cursor: pointer; list-style: none;
+    font-size: 0.9rem; font-weight: 600; color: var(--ink-soft);
+    padding: 0.15rem 0;
   }
-  details.sub > summary::-webkit-details-marker { display: none; }
-  details.sub > summary::before {
-    content: '▸';
-    font-family: var(--font-mono);
-    color: var(--ink-faint);
-    width: 0.9rem;
-    font-weight: normal;
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before {
+    content: '▸'; font-family: var(--font-mono); color: var(--ink-faint);
+    width: 0.9rem; font-weight: normal;
   }
-  details.sub[open] > summary::before { content: '▾'; }
-  .sub-body { padding: 0.5rem 0.2rem 0.4rem 1.6rem; border-top: 1px solid var(--rule); margin-top: 0.4rem; }
-  .sub-body p, .sub-body li { margin: 0.3rem 0; font-size: 0.9rem; color: var(--ink-soft); }
+  details.fold[open] > summary::before { content: '▾'; }
+  .fold-body { padding: 0.5rem 0.2rem 0.3rem 1.6rem; border-top: 1px solid var(--rule); margin-top: 0.4rem; }
+  .fold-body p, .fold-body li { margin: 0.3rem 0; font-size: 0.9rem; color: var(--ink-soft); }
 
   a { color: var(--accent); text-underline-offset: 2px; }
   code { font-family: var(--font-mono); font-size: 0.88em; background: var(--paper-2); padding: 0.1rem 0.3rem; border-radius: 3px; }
@@ -190,7 +236,6 @@
   .badge-warn { background: var(--warn); color: #fff; }
 
   .export-btn {
-    position: fixed; bottom: 1.1rem; right: 1.3rem; z-index: 100;
     font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft);
     background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px;
     padding: 0.4em 0.8em; cursor: pointer; opacity: 0.75;
@@ -202,12 +247,13 @@
   @media print {
     body { padding-bottom: 0; }
     nav.toc, .export-btn, .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn, #comments-panel-btn { display: none !important; }
-    details.section, details.sub { border: none; background: none; padding: 0; margin: 0 0 1rem; }
-    details.section > summary.section-head::before,
-    details.sub > summary::before { display: none; }
-    /* Force every disclosure open in print — collapsed content must not be lost in the PDF */
-    details.section, details.sub { display: block !important; }
-    .sub-body, .section-body { display: block !important; }
+    section.section, details.fold { border: none; background: none; padding: 0; margin: 0 0 1rem; }
+    h2.section-head::before, details.fold > summary::before { display: none; }
+    .callout { break-inside: avoid; }
+    /* Force every opt-in fold open in print — collapsed content must not be lost in the PDF */
+    details.fold { display: block !important; }
+    details.fold > summary { pointer-events: none; }
+    .fold-body, .section-body { display: block !important; }
     * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   }
 
@@ -236,6 +282,7 @@
   .comment-toast { display: none; position: fixed; bottom: 4rem; right: 1.3rem; background: var(--ink); color: var(--paper); font-family: var(--font-mono); font-size: 0.8rem; padding: 0.6em 1em; border-radius: 6px; z-index: 400; }
   .comment-toast.visible { display: block; }
   #page-comment-controls { position: fixed; bottom: 1.1rem; right: 1.3rem; display: flex; gap: 0.6rem; z-index: 100; }
+  #page-comment-controls .export-btn { position: static; }
   #page-comment-controls button { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0.35em 0.7em; cursor: pointer; opacity: 0.75; }
   #page-comment-controls button:hover { opacity: 1; }
   @media print { #page-comment-controls { display: none !important; } }
@@ -254,36 +301,64 @@
 
 <main>
 
-  <!-- Anchor-link TOC — one entry per top-level <details class="section" id="..."> below.
+  <!-- Anchor-link TOC — one entry per top-level <section class="section" id="..."> below.
        These are plain anchors (href="#section-id"), NOT hash-routed slides. -->
   <nav class="toc">
     <a href="#example-section">Example section</a>
   </nav>
 
   <!-- SECTIONS:START — replace the sample section below with real content.
-       Each top-level section: <details class="section" id="anchor-id" open>
-       Keep the two-level details/summary pattern for nested sub-items. -->
+       Each top-level section is an ALWAYS-VISIBLE block:
+         <section class="section" id="anchor-id"> … </section>
+       No click-to-open. Put supporting "why/how"/caveats in an always-visible
+       <aside class="callout"> — NOT a nested dropdown. Reach for
+       <details class="fold"> only for long, optional appendix material. -->
 
-  <details class="section" id="example-section" open>
-    <summary class="section-head"><h2>Example section — delete me</h2></summary>
+  <section class="section" id="example-section">
+    <h2 class="section-head">Example section — delete me</h2>
     <div class="section-body">
-      <p>Top-level scoped content goes here — the face of this section.</p>
+      <p>Section body is always visible — the reader scrolls to it, never clicks
+         to reveal it. Lead with the point, then support it with the scannable
+         primitives below instead of long paragraphs.</p>
 
-      <details class="sub">
-        <summary>Example sub-item — delete me</summary>
-        <div class="sub-body">
-          <p>Nested detail lives here: the deeper "why"/"how", a rejected alternative, a code note, or supporting links. Native <code>&lt;details&gt;</code> — no custom JS toggle needed.</p>
+      <div class="statgrid">
+        <div class="stat"><div class="stat-value">3</div><div class="stat-label">example metric</div></div>
+        <div class="stat"><div class="stat-value">~1M</div><div class="stat-label">another number worth surfacing</div></div>
+        <div class="stat"><div class="stat-value">MEDIUM</div><div class="stat-label">a tunable knob</div></div>
+      </div>
+
+      <p>Inline status labels read at a glance:
+         <span class="pill pill-good">shipped</span>
+         <span class="pill pill-warn">caveat</span>
+         <span class="pill pill-bad">blocked</span>.</p>
+
+      <aside class="callout callout-accent">
+        <span class="callout-label">Why</span>
+        The deeper "why/how", a rejected alternative, or a supporting note that
+        used to be buried in a nested dropdown now lives here — always visible,
+        just visually de-emphasized. Use <code>callout-accent</code> for a
+        decision/good news, <code>callout-warn</code> for a caveat, or the plain
+        <code>callout</code> for neutral context.
+      </aside>
+
+      <details class="fold">
+        <summary>Optional appendix material — delete me</summary>
+        <div class="fold-body">
+          <p>Reserve <code>&lt;details class="fold"&gt;</code> for genuinely long
+             and genuinely optional content: a raw log dump, a full transcript,
+             an exhaustive table nobody needs on first read. If it's short or
+             load-bearing, make it a callout instead. Never nest a fold in a fold.</p>
         </div>
       </details>
     </div>
-  </details>
+  </section>
 
   <!-- SECTIONS:END -->
 
 </main>
 
-<button class="export-btn" onclick="window.print()" title="Export to PDF">Export PDF</button>
 <div id="page-comment-controls">
+  <button class="export-btn" onclick="window.print()" title="Export to PDF">Export PDF</button>
   <button id="comments-panel-btn">Comments (<span id="comment-count">0</span>)</button>
 </div>
 <button id="selection-comment-btn" class="selection-comment-btn">💬 Comment</button>
@@ -351,8 +426,8 @@
     }
     function locationFor(node) {
       var el = node.nodeType === 1 ? node : node.parentElement;
-      var section = el && el.closest ? el.closest('details.section') : null;
-      var heading = section ? section.querySelector('summary.section-head h2, summary h2') : null;
+      var section = el && el.closest ? el.closest('section.section') : null;
+      var heading = section ? section.querySelector('h2.section-head, h2') : null;
       return heading ? heading.textContent.trim() : document.title;
     }
 
