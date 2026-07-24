@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Claude Bridge"
+  short_description: "Bridge repo Claude guidance and skills into Codex."
+  default_prompt: "Bridge this repo's Claude guidance and compatible skills into Codex, dry-run first, apply only safe symlinks, then verify the manifest."
