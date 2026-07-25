@@ -9,7 +9,7 @@ Keep detailed reports, source notes, and diagnostics in per-unit files under `lo
 ## Dispatch rules
 
 - Give every agent a precise, bounded unit, the expected deliverable, acceptance criteria, relevant paths, and a named report file.
-- Assign every dispatched agent a stable `task_name` such as `<unit>_doer` or `<unit>_reviewer`. Use lowercase letters, digits, and underscores only. Reuse it in the log, report filename, and fix-loop prompt so the Codex app, coordination record, and reports name the same owner. If the active agent surface lacks `task_name`, retain the same logical name in those artifacts.
+- Give every dispatched agent a stable, descriptive prose name that explains its mandate, such as **OAuth Contract Auditor**, **Migration Risk Reviewer**, or **Competitive Landscape Researcher**; do not use generic role-only names. Use the prose name in the orchestration log and coordinator messages. Encode it as the required lowercase `task_name` only at dispatch (`oauth_contract_auditor`, for example); the Codex app displays that as the readable title. Use the encoded form only where a tool argument or filesystem-safe report name requires it. If the active agent surface lacks `task_name`, retain the prose name in the coordination artifacts.
 - Use a fresh agent for an independent judgment. Reuse the original agent for amendments to its own work.
 - Do not allow nested delegation unless the user explicitly asks for it.
 - Do not give doers ownership of the coordinator's task list. One agent owns a unit at a time; never overlap writers on the same files.
