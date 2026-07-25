@@ -2,9 +2,9 @@
 
 ## Keep the lead bounded
 
-Maintain a compact task index and pointers, not a growing transcript. Put detailed reports, source notes, and diagnostics in per-unit files. Read detail only to make a decision that cannot be delegated; otherwise route the file to the agent that needs it.
+Before dispatching work, create `local/<task>/orchestrator-log.md`. This is the durable compact index for every orchestration run, not only runs that request a presentation. Keep a status table (`unit | owner | mode | dependency | state | validation | report`) plus concise steering decisions, incidents, and user flags. Append or update only the relevant entry; do not turn it into a transcript.
 
-Keep durable work under `local/<task>/` when the repository provides `local/`; otherwise use the project's established scratch location. The index records `unit | owner | mode | dependency | state | validation | report`.
+Keep detailed reports, source notes, and diagnostics in per-unit files under `local/<task>/` when the repository provides `local/`; otherwise use the project's established scratch location. Read detail only to make a decision that cannot be delegated; otherwise route the file to the agent that needs it.
 
 ## Dispatch rules
 
