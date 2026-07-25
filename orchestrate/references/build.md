@@ -7,11 +7,11 @@ Use this workflow for a substantial implementation spanning multiple files, subs
 1. Read the authoritative specification and resolve contradictions before decomposition.
 2. Confirm scope, commit policy, and any special review emphasis. Do not assume commits, pushes, or pull requests are authorized.
 3. Check the intended worktree and branch. Create a compact index under `local/<task>/` with one row per unit.
-4. Reuse the repository's convention pack when present. If it is missing, create a short concrete checklist from the authoritative project guidance; keep build-specific constraints in a task note instead.
+4. Check `.claude/orchestrate/conventions.md`, then the legacy `.claude/orchestrate-build/conventions.md`. Reuse the first one found. If neither exists, distill the authoritative project guidance into `.claude/orchestrate/conventions.md`: 10–15 concrete naming, pattern, and invariant rules. Point both doers and reviewers at the same file; keep task-specific constraints in a task note instead.
 
 ## Per-unit pipeline
 
-1. **Doer:** dispatch a named, fresh agent with one unit, relevant file paths, acceptance criteria, conventions, and a report path. Require it to implement, write or update relevant tests, run the project test workflow, and report actual output. It must not claim other units, spawn agents, or remove a working legacy path before replacement is verified.
+1. **Doer:** dispatch a named, fresh agent with one unit, relevant file paths, acceptance criteria, the convention pack, [build-guardrails.md](build-guardrails.md), and a report path. Require it to implement, write or update relevant tests, run the project test workflow, and report actual output. It must not claim other units, spawn agents, or remove a working legacy path before replacement is verified.
 2. **Review:** dispatch a fresh reviewer for code units. It reads and reasons about the changed paths but does not rerun the test suite. Require separate quality and correctness/security sections, ranked actionable findings, and a clear `clean` or `changes needed` verdict.
 3. **Fix loop:** on material findings, send the review report path to the original doer. Re-review substantial fixes.
 4. **Accept:** require the doer's green relevant tests and a clean review. Spot-check only when a report is implausible or an incident makes the normal gate untrustworthy.

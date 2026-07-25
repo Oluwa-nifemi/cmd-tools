@@ -2,16 +2,18 @@
 
 ## Keep the lead bounded
 
-Before dispatching work, create `local/<task>/orchestrator-log.md`. This is the durable compact index for every orchestration run, not only runs that request a presentation. Keep a status table (`unit | owner | mode | dependency | state | validation | report`) plus concise steering decisions, incidents, and user flags. Append or update only the relevant entry; do not turn it into a transcript.
+Ensure `local/` exists; create it when absent. Before dispatching work, create `local/<task>/orchestrator-log.md`. This is the durable compact index for every orchestration run, not only runs that request a presentation. Keep a status table (`unit | owner | mode | dependency | state | validation | report`) plus concise steering decisions, incidents, and user flags. Append or update only the relevant entry; do not turn it into a transcript.
 
 Keep detailed reports, source notes, and diagnostics in per-unit files under `local/<task>/` when the repository provides `local/`; otherwise use the project's established scratch location. Read detail only to make a decision that cannot be delegated; otherwise route the file to the agent that needs it.
 
 ## Dispatch rules
 
 - Give every agent a precise, bounded unit, the expected deliverable, acceptance criteria, relevant paths, and a named report file.
+- Assign each unit a stable logical name such as `<unit>-doer` or `<unit>-reviewer`; use it in the log, report filename, and fix-loop prompt. Do not depend on the Codex app displaying it as an actual teammate name.
 - Use a fresh agent for an independent judgment. Reuse the original agent for amendments to its own work.
 - Do not allow nested delegation unless the user explicitly asks for it.
 - Do not give doers ownership of the coordinator's task list. One agent owns a unit at a time; never overlap writers on the same files.
+- If ownership or concurrency is violated, record one incident and verify the affected files once before resuming.
 - Use the cheapest adequate model: Haiku for mechanically specified work, Sonnet for routine work and review, Opus only for a genuine high-consequence judgment.
 - Require a short message containing verdict, one-line validation result, and report path. Keep the detail in the report.
 
