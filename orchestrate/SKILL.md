@@ -10,13 +10,14 @@ Act as the coordinator. Establish the outcome, decompose work, assign bounded un
 ## Start
 
 1. Identify the deliverable, success criteria, authority boundaries, and likely mode: `build`, `research`, `artifact`, or `mixed`.
-2. Ask one concise clarification only when an unresolved choice would materially change scope, output, external actions, or validation. Otherwise state the assumption and proceed.
-3. Read the matching workflow reference in full:
+2. Ask whether the user wants a wrap-up presentation at the end. Explain that it pairs the durable orchestration record (how the work ran) with a deck or page describing what the work produced. Record any audience or format preference; default the audience to `self` and select the format from the actual run size at wrap-up.
+3. Ask one additional concise clarification only when an unresolved choice would materially change scope, output, external actions, or validation. Otherwise state the assumption and proceed.
+4. Read the matching workflow reference in full:
    - Build: [references/build.md](references/build.md)
    - Research: [references/research.md](references/research.md)
    - Artifact: [references/artifact.md](references/artifact.md)
    - Mixed work: read every applicable reference and sequence the modes around their dependencies.
-4. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents.
+5. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. If the user requested the wrap-up presentation, also read [references/presentation-wrapup.md](references/presentation-wrapup.md).
 
 ## Mode choice
 
@@ -31,4 +32,4 @@ Do not use orchestration for a small, self-contained task that one agent can saf
 
 ## Finish
 
-Report the completed deliverable, verification performed, decisions made under delegated authority, unresolved risks, and the locations of durable artifacts. Do not commit, push, publish, or make external changes unless the user explicitly authorized them.
+Report the completed deliverable, verification performed, decisions made under delegated authority, unresolved risks, and the locations of durable artifacts. When requested, render the presentation wrap-up after the completion record is final. Do not commit, push, publish, or make external changes unless the user explicitly authorized them.
