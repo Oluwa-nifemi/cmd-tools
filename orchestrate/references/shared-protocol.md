@@ -9,12 +9,12 @@ Keep detailed reports, source notes, and diagnostics in per-unit files under `lo
 ## Dispatch rules
 
 - Give every agent a precise, bounded unit, the expected deliverable, acceptance criteria, relevant paths, and a named report file.
-- Assign each unit a stable logical name such as `<unit>-doer` or `<unit>-reviewer`; use it in the log, report filename, and fix-loop prompt. Do not depend on the Codex app displaying it as an actual teammate name.
+- Assign every dispatched agent a stable `task_name` such as `<unit>_doer` or `<unit>_reviewer`. Use lowercase letters, digits, and underscores only. Reuse it in the log, report filename, and fix-loop prompt so the Codex app, coordination record, and reports name the same owner. If the active agent surface lacks `task_name`, retain the same logical name in those artifacts.
 - Use a fresh agent for an independent judgment. Reuse the original agent for amendments to its own work.
 - Do not allow nested delegation unless the user explicitly asks for it.
 - Do not give doers ownership of the coordinator's task list. One agent owns a unit at a time; never overlap writers on the same files.
 - If ownership or concurrency is violated, record one incident and verify the affected files once before resuming.
-- Use the cheapest adequate model: Haiku for mechanically specified work, Sonnet for routine work and review, Opus only for a genuine high-consequence judgment.
+- Use the cheapest adequate model: Luna for mechanically specified work, Terra for routine work and review, Sol or Opus only for a genuine high-consequence judgment.
 - Require a short message containing verdict, one-line validation result, and report path. Keep the detail in the report.
 
 ## Authority and safety

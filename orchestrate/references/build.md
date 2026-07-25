@@ -24,5 +24,5 @@ Act as the coordinator, not an implementation doer. Do not edit production code 
 - One writer per file at a time. Do not let background agents claim the next unit.
 - A reviewer is independent judgment, not a second test runner.
 - Keep detailed doer and reviewer reports in separate files. Route report paths rather than repeatedly pasting findings into the coordinator context.
-- Use Sonnet by default. Use Haiku only for tightly specified mechanical edits with review. Reserve Opus for a rare high-consequence, judgment-heavy review.
+- Use Terra by default. Use Luna only for tightly specified mechanical edits with review. Reserve Sol or Opus for a rare high-consequence, judgment-heavy review.
 - If a code unit is really a migration, preserve the existing path until an end-to-end check proves the replacement.
