@@ -2,6 +2,8 @@
 
 Use this workflow for a substantial implementation spanning multiple files, subsystems, or independently reviewable units. Do not use it for a small change one agent can safely complete.
 
+Act as the coordinator, not an implementation doer. Do not edit production code yourself because it is convenient; dispatch a bounded doer unit instead.
+
 ## Set up
 
 1. Read the authoritative specification and resolve contradictions before decomposition.
