@@ -14,6 +14,32 @@ A shell function for creating and managing git worktrees with minimal friction. 
 
 Files are **hard-linked** (same inode), so edits in any worktree are visible everywhere. This is intentional — these are shared config files. Directories in the glob list get **symlinked** (macOS can't hard-link directories).
 
+## Agent-created worktrees (Codex)
+
+`wt` also manages worktrees it didn't create. Codex puts its worktrees at
+`WT_WORKTREES_DIR/codex/<4-hex-session-id>/<repo-name>` — the repo name is the
+*last* component, the middle segment is an opaque id, and the worktree is often
+left on a **detached HEAD** with no branch name at all. The old name-derivation
+(strip the `WT_WORKTREES_DIR/<repo>/` prefix) produced full absolute paths as
+"names", which made `wt switch` unusable.
+
+Discovery now goes through a single scanner (`_wt_scan`) that labels every
+linked worktree regardless of who made it:
+
+| Worktree kind | Label shown |
+|---|---|
+| Created by `wt` | Relative name under `WT_WORKTREES_DIR/<repo>/` (= branch name) |
+| Codex, with a known thread | The **Codex thread title** — e.g. `Fix Token Limit` |
+| Codex, no thread found | Branch name, else `detached@<short-sha>` |
+
+Codex titles come from joining two files Codex already maintains: each rollout
+JSONL's first line carries `cwd` + `session_id`, and `~/.codex/session_index.jsonl`
+maps `session_id` → the thread name shown in the app. The lookup reads only the
+first line of each rollout (`rg -m1`), so it stays ~60ms even over a 1&nbsp;GB
+sessions directory, and degrades silently to branch/sha labels if `rg` or the
+Codex dirs are absent. When a worktree dir has been reused by several sessions,
+the newest session's title wins.
+
 ## Setup
 
 Configuration is via environment variables:
@@ -36,11 +62,13 @@ wt install ~/Documents/Programming/worktrees
 | Command | Description |
 |---------|-------------|
 | `wt create <name> [base]` | Create a worktree for a new branch, link ignored files, cd in. `base` defaults to current branch. |
+| `wt create` | With no name, prompts for the worktree/branch name and base branch (base defaults to the current branch). Empty name aborts. |
 | `wt c <name> [base]` | Shortcut for `wt create` |
-| `wt switch [name]` | Switch to a worktree by branch name. Substring match — `wt switch auth` matches `feat/add-auth`. No argument shows interactive picker (fzf if available, numbered list fallback). Single match jumps directly. |
-| `wt list` | List all worktrees (passthrough to `git worktree list`) |
+| `wt switch [name\|number]` | Switch to a worktree. Substring match against **label, branch, and Codex session id** — `wt switch auth`, `wt switch AI-1557`, and `wt switch 2d54` all work, as does a Codex thread title (`wt switch "Fix Token"`). A bare number picks that row from `wt list`. No argument shows the interactive picker. Single match jumps directly. |
+| `wt main` | Jump back to the main worktree. |
+| `wt list` | Numbered list of all linked worktrees: label, branch, origin tag (`codex <id>` / `external`), and `*` for uncommitted changes. The numbers are what `wt switch <number>` takes. |
 | `wt rename <old> <new>` | Rename a worktree's directory and its branch atomically. Works with branch names containing `/`. |
-| `wt clean [name] [--force]` | Remove a worktree and delete its branch. Defaults to current worktree. `--force` skips the uncommitted-changes check. |
+| `wt clean [name] [--force]` | Remove a worktree and delete its branch. Defaults to current worktree. `name` is resolved with the same fuzzy match as `switch` (so it works on Codex worktrees too) and refuses to act on an ambiguous match. Detached worktrees are removed without a branch delete. `--force` skips the uncommitted-changes check. |
 | `wt clean --merged` | Remove all worktrees whose branches have been merged. Checks `gh pr view` (squash-merge aware) then falls back to `git branch --merged`. |
 | `wt push [remote-branch]` | Push to remote, defaults to same branch name. |
 | `wt install <path>` | Set `WT_WORKTREES_DIR`, persist as an export in `~/.zshrc`. |
@@ -49,9 +77,15 @@ wt install ~/Documents/Programming/worktrees
 ## Tab completion
 
 `wt install` automatically installs zsh tab completion:
-- Completes subcommands (`create`, `switch`, `rename`, etc.)
-- Completes worktree names for `switch`, `rename`, and `clean`
+- Completes subcommands (`create`, `switch`, `main`, `rename`, etc.)
+- Completes worktree names for `switch`, `rename`, and `clean` — driven by the
+  same `_wt_scan` the commands use, so Codex worktrees and thread titles are
+  offered too, annotated with their branch/origin
 - `clean` also completes `--force` and `--merged`
+
+The picker (`wt switch` with no unique match) uses `fzf` when available, with a
+preview pane showing recent commits and dirty files for the highlighted
+worktree; otherwise it falls back to the numbered list.
 
 ## Branch names with slashes
 

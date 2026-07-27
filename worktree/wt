@@ -15,13 +15,208 @@
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
 : "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk}"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Worktree discovery
+#
+# `wt` used to derive a worktree's display name by stripping the
+# "$WT_WORKTREES_DIR/<repo>/" prefix off its path. That only works for
+# worktrees `wt` created itself. Codex (and other agent harnesses) create
+# worktrees at paths like
+#     $WT_WORKTREES_DIR/codex/<4-hex>/<repo-name>
+# i.e. the repo name is the LAST component and a meaningless session id sits in
+# the middle. Under the old prefix-strip the label came out as the entire
+# absolute path, so `wt switch` listed unreadable garbage and substring
+# matching effectively never hit. Worse, Codex often leaves the worktree on a
+# detached HEAD, so there is no branch name to fall back on either.
+#
+# So discovery is centralised here: one scanner that labels every worktree,
+# whoever created it, and tags where it came from.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_wt_main_worktree() {
+  git worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2; exit }'
+}
+
+# Map Codex-created worktree paths to their human thread names.
+#
+# Codex names worktree dirs after an opaque 4-hex session prefix and very often
+# leaves them on a detached HEAD, so `wt list` would otherwise show a column of
+# "detached@45e5405 / codex 9747" rows that are impossible to tell apart. But
+# Codex does know what each session was about: every rollout JSONL opens with a
+# session_meta line carrying both `cwd` and `session_id`, and
+# ~/.codex/session_index.jsonl maps session_id -> the thread name shown in the
+# app ("Fix Token Limit"). Joining those two gives each worktree a real title.
+#
+# Emits "<worktree-path> <TAB> <thread name>". Best-effort: silent no-op when
+# rg or the Codex dirs are missing.
+_wt_codex_titles() {
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local index="$codex_home/session_index.jsonl"
+  [[ -f "$index" ]] || return 0
+  command -v rg &>/dev/null || return 0
+
+  local -a session_dirs=()
+  [[ -d "$codex_home/sessions" ]] && session_dirs+=("$codex_home/sessions")
+  [[ -d "$codex_home/archived_sessions" ]] && session_dirs+=("$codex_home/archived_sessions")
+  [[ ${#session_dirs[@]} -eq 0 ]] && return 0
+
+  # `-m1` stops at the session_meta line (always line 1), which is what keeps
+  # this fast despite the sessions dir being ~1GB: rg never reads past the head
+  # of each file. Measured at ~15ms over 570 rollouts.
+  rg --no-messages -o --no-filename --no-line-number -m1 \
+     '"session_id":"[^"]*".*?"cwd":"[^"]*/worktrees/codex/[^"]*"' \
+     "${session_dirs[@]}" 2>/dev/null \
+  | awk -v index_file="$index" '
+      {
+        if (match($0, /"session_id":"[^"]*"/)) {
+          sid = substr($0, RSTART + 14, RLENGTH - 15)
+        } else next
+        if (match($0, /"cwd":"[^"]*"/)) {
+          cwd = substr($0, RSTART + 7, RLENGTH - 8)
+        } else next
+        # A worktree dir gets reused across sessions, so several rollouts can
+        # claim the same cwd; the newest one is the session the user actually
+        # has open there. Compare the meta line s ISO-8601 timestamp explicitly
+        # rather than trusting input order — rg searches files in parallel, so
+        # "last line wins" would make the label flicker between runs.
+        stamp = ""
+        if (match($0, /"timestamp":"[^"]*"/)) {
+          stamp = substr($0, RSTART + 13, RLENGTH - 14)
+        }
+        if (stamp >= newest[cwd]) { newest[cwd] = stamp; sid_for[cwd] = sid }
+      }
+      END {
+        while ((getline line < index_file) > 0) {
+          if (match(line, /"id":"[^"]*"/)) {
+            id = substr(line, RSTART + 6, RLENGTH - 7)
+          } else continue
+          if (match(line, /"thread_name":"[^"]*"/)) {
+            title[id] = substr(line, RSTART + 15, RLENGTH - 16)
+          }
+        }
+        for (cwd in sid_for) {
+          name = title[sid_for[cwd]]
+          if (name != "") printf "%s\t%s\n", cwd, name
+        }
+      }'
+}
+
+# Base dir for THIS repo's managed worktrees: $WT_WORKTREES_DIR/<repo-name>.
+_wt_dir() {
+  local main_wt="${1:-$(_wt_main_worktree)}"
+  [[ -z "$main_wt" || "$WT_WORKTREES_DIR" == "__NOT_CONFIGURED__" ]] && return 1
+  local repo_name="${main_wt:t}"
+  # Resolve symlinks when the dir already exists so path comparisons against
+  # `git worktree list` output (which is always resolved) actually match. The
+  # subshell is load-bearing: a bare `cd` here would move the *caller's* shell
+  # out of the repo, and every later git command would fail.
+  ( cd "$WT_WORKTREES_DIR/$repo_name" 2>/dev/null && pwd -P ) || echo "$WT_WORKTREES_DIR/$repo_name"
+}
+
+# Emit one tab-separated record per LINKED worktree (main and bare excluded):
+#     label <TAB> branch <TAB> origin <TAB> path
+#
+#   label  — what the user sees and types: the managed relative name, else the
+#            branch name, else "detached@<short-sha>".
+#   branch — branch name, or "" when detached.
+#   origin — "wt" (managed, lives under $WT_WORKTREES_DIR/<repo>/) or
+#            "codex:<id>" / "ext" for anything created outside wt.
+_wt_scan() {
+  local main_wt="$(_wt_main_worktree)"
+  [[ -z "$main_wt" ]] && return 1
+  local wtdir="$(_wt_dir "$main_wt")"
+  local base="${WT_WORKTREES_DIR:A}"
+
+  # Codex thread titles, looked up once per scan rather than per worktree.
+  local -A codex_title=()
+  local title_line
+  while IFS= read -r title_line; do
+    [[ -z "$title_line" ]] && continue
+    codex_title[${title_line%%	*}]="${title_line#*	}"
+  done < <(_wt_codex_titles)
+
+  local wt_path="" wt_branch="" wt_head="" wt_bare=0
+  # `local path=...` would be a bug here, not a style nit: in zsh `path` is
+  # tied to `PATH`, so declaring it local blanks out the command search path
+  # for the rest of the function and every external command (git included)
+  # silently stops resolving. Hence the wt_ prefixes.
+  # `git worktree list --porcelain` emits a blank-line-separated stanza per
+  # worktree; flush on the blank line (and once more at EOF, since the final
+  # stanza's trailing newline is eaten by the while-read).
+  _wt_scan_flush() {
+    [[ -z "$wt_path" || $wt_bare -eq 1 || "$wt_path" == "$main_wt" ]] && {
+      wt_path=""; wt_branch=""; wt_head=""; wt_bare=0; return
+    }
+    local label="" origin="ext"
+    if [[ -n "$wtdir" && "$wt_path" == "$wtdir/"* ]]; then
+      label="${wt_path#$wtdir/}"
+      origin="wt"
+    else
+      # Codex layout: $WT_WORKTREES_DIR/codex/<id>/<repo>. Pull the <id> out so
+      # two worktrees on the same branch (or two detached ones) stay tellable
+      # apart, and so the user can type the id itself to jump.
+      local rest="${wt_path#$base/}"
+      if [[ "$rest" != "$wt_path" && "$rest" == codex/* ]]; then
+        local id="${${rest#codex/}%%/*}"
+        origin="codex:$id"
+      fi
+      # Prefer the Codex thread title — "Fix Token Limit" is what the user
+      # actually remembers, far more than a branch name or a short sha.
+      label="${codex_title[$wt_path]:-${wt_branch:-detached@${wt_head[1,7]}}}"
+    fi
+    print -r -- "$label	$wt_branch	$origin	$wt_path"
+    wt_path=""; wt_branch=""; wt_head=""; wt_bare=0
+  }
+
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) wt_path="${line#worktree }" ;;
+      "HEAD "*)     wt_head="${line#HEAD }" ;;
+      "branch "*)   wt_branch="${${line#branch }#refs/heads/}" ;;
+      "bare")       wt_bare=1 ;;
+      "")           _wt_scan_flush ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  _wt_scan_flush
+  unfunction _wt_scan_flush
+}
+
+# Render one scan record as an aligned, human-readable row:
+#   <n>) <label>            codex 2d54   *
+# (`path` is deliberately NOT used as a variable name — see the note in
+# _wt_scan about zsh tying `path` to `PATH`.)
+_wt_row() {
+  local idx="$1" label="$2" branch="$3" origin="$4" wt_path="$5" show_dirty="${6:-1}"
+  local tag="" dirty=""
+  case "$origin" in
+    codex:*) tag="codex ${origin#codex:}" ;;
+    ext)     tag="external" ;;
+    *)       tag="" ;;
+  esac
+  # Show the branch alongside the label unless they're the same string (which
+  # they are for wt-managed worktrees, where the dir IS the branch name).
+  local detail="$branch"
+  [[ -z "$detail" ]] && detail="detached"
+  [[ "$label" == "$branch" ]] && detail=""
+  # Whether an agent left uncommitted work behind is the single most useful
+  # thing to know before jumping in, so it's shown by default — but it costs a
+  # `git status` per worktree, so callers can switch it off on huge repos.
+  if [[ "$show_dirty" == 1 ]] && ! git -C "$wt_path" diff --quiet HEAD 2>/dev/null; then
+    dirty="*"
+  fi
+  printf '  %2s) %-36s %-32s %-12s %s\n' "$idx" "$label" "$detail" "$tag" "$dirty"
+}
+
 wt() {
   if [[ -z "$1" || "$1" == "--help" || "$1" == "-h" ]]; then
     echo "wt — git worktree manager"
     echo ""
     echo "Usage: wt create <name> [base-branch]  Create a worktree and open Claude"
-    echo "       wt list                     List all worktrees"
-    echo "       wt switch [name]            Switch to a worktree (fuzzy match)"
+    echo "       wt create                   Prompt for name (and base branch)"
+    echo "       wt list                     List worktrees, numbered"
+    echo "       wt switch [name|number]     Switch to a worktree (fuzzy match)"
+    echo "       wt main                     Jump back to the main worktree"
 	    echo "       wt rename <old> <new>       Rename a worktree and its branch"
     echo "       wt clean [name] [--force]   Remove a worktree and its branch (defaults to current)"
 	    echo "       wt clean --merged           Remove all worktrees with merged branches"
@@ -41,8 +236,20 @@ wt() {
     local name="${2:-}"
     local base="${3:-$(git rev-parse --abbrev-ref HEAD)}"
     local use_remote=0
-    [[ -z "$name" ]] && echo "Usage: wt create <name> [base-branch] [--remote]" && return 1
     [[ "$3" == "--remote" || "$4" == "--remote" ]] && use_remote=1
+    # No name given → prompt instead of erroring out. `wt create` on its own is
+    # the natural thing to type when you know you want a worktree but haven't
+    # settled on the branch name yet; making that a usage error just forces a
+    # retype. Empty input aborts.
+    if [[ -z "$name" ]]; then
+      echo -n "Worktree/branch name: "
+      read -r name
+      [[ -z "$name" ]] && echo "wt create: aborted (no name given)" && return 1
+      local base_default="$base"
+      echo -n "Base branch [$base_default]: "
+      read -r base
+      [[ -z "$base" ]] && base="$base_default"
+    fi
   elif [[ "$1" == "install" ]]; then
     local new_path="${2:-}"
     [[ -z "$new_path" ]] && echo "Usage: wt install <path>" && return 1
@@ -98,74 +305,114 @@ wt() {
   local worktrees_dir
   worktrees_dir="$(cd "$WT_WORKTREES_DIR/$repo_name" 2>/dev/null && pwd -P || echo "$WT_WORKTREES_DIR/$repo_name")"
 
+  # Getting *out* of an agent-created worktree was previously a manual `cd` to
+  # a path you had to remember; switch only ever moved between linked ones.
+  if [[ "$1" == "main" ]]; then
+    cd "$main_worktree" || return 1
+    return 0
+  fi
+
   if [[ "$1" == "list" ]]; then
-    git worktree list
+    # `wt list` used to be a bare passthrough to `git worktree list`, which is
+    # unusable once agent harnesses are in play: 20 near-identical absolute
+    # paths, half of them detached. Show the same numbered rows `wt switch`
+    # uses instead, so what you read is what you can type.
+    local -a rows=("${(@f)$(_wt_scan)}")
+    if [[ ${#rows[@]} -eq 0 || -z "${rows[1]}" ]]; then
+      echo "No linked worktrees. Main: $main_worktree"
+      return 0
+    fi
+    echo "$main_worktree  (main)"
+    local idx=1 rec
+    for rec in "${rows[@]}"; do
+      local -a f=("${(@s:	:)rec}")
+      _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
+      ((idx++))
+    done
+    echo ""
+    echo "  * = uncommitted changes.  Jump with: wt switch <number|name>"
     return 0
   fi
 
   if [[ "$1" == "switch" ]]; then
     local name="${2:-}"
 
-    # Gather linked worktree names (exclude bare/ main worktree).
-    local -a worktree_names=()
-    local wt_path=""
-    local wt_bare=0
-    while IFS= read -r line; do
-      if [[ "$line" == "worktree "* ]]; then
-        wt_path="${line#worktree }"
-        wt_bare=0
-      elif [[ "$line" == "bare" ]]; then
-        wt_bare=1
-      elif [[ -z "$line" ]]; then
-        if [[ "$wt_bare" != "1" && "$wt_path" != "$main_worktree" ]]; then
-          worktree_names+=("${wt_path#$worktrees_dir/}")
-        fi
-        wt_path=""
-        wt_bare=0
-      fi
-    done < <(git worktree list --porcelain)
-
-    if [[ ${#worktree_names[@]} -eq 0 ]]; then
+    local -a records=("${(@f)$(_wt_scan)}")
+    [[ ${#records[@]} -eq 1 && -z "${records[1]}" ]] && records=()
+    if [[ ${#records[@]} -eq 0 ]]; then
       echo "wt switch: no linked worktrees found"
       return 1
     fi
 
+    # A bare number selects straight out of the last `wt list` / picker
+    # ordering — the fastest path when you've just looked at the list.
+    if [[ "$name" =~ '^[0-9]+$' ]] && (( name >= 1 && name <= ${#records[@]} )); then
+      local -a f=("${(@s:	:)records[$name]}")
+      cd "${f[4]}" || return 1
+      return 0
+    fi
+
     local -a matches=()
+    local rec
     if [[ -n "$name" ]]; then
-      for wt_name in "${worktree_names[@]}"; do
-        [[ "$wt_name" == *"$name"* ]] && matches+=("$wt_name")
+      # Match against label, branch, and the codex session id, so any of
+      # `wt switch guardrails`, `wt switch AI-1557`, `wt switch 2d54` land.
+      for rec in "${records[@]}"; do
+        local -a f=("${(@s:	:)rec}")
+        if [[ "${f[1]}" == *"$name"* || "${f[2]}" == *"$name"* || "${f[3]}" == *"$name"* ]]; then
+          matches+=("$rec")
+        fi
       done
       if [[ ${#matches[@]} -eq 0 ]]; then
         echo "wt switch: no worktree matching '$name'"
         return 1
       elif [[ ${#matches[@]} -eq 1 ]]; then
-        cd "$worktrees_dir/${matches[1]}" || return 1
+        local -a f=("${(@s:	:)matches[1]}")
+        cd "${f[4]}" || return 1
         return 0
       fi
     else
-      matches=("${worktree_names[@]}")
+      matches=("${records[@]}")
     fi
 
     # Interactive picker for multiple matches (or no filter).
-    local selected=""
+    local selected_path=""
     if command -v fzf &>/dev/null; then
-      selected="$(printf '%s\n' "${matches[@]}" | fzf --prompt="worktree> ")"
+      # Render "<display>\t<path>" into fzf, hide the path column, and read the
+      # path back off the selected line — no re-matching on the display text.
+      local line
+      line="$(
+        for rec in "${matches[@]}"; do
+          local -a f=("${(@s:	:)rec}")
+          local extra="${f[2]:-detached}"
+          [[ "${f[1]}" == "$extra" ]] && extra=""
+          local origin_tag=""
+          [[ "${f[3]}" == codex:* ]] && origin_tag="codex ${f[3]#codex:}"
+          [[ "${f[3]}" == ext ]] && origin_tag="external"
+          printf '%-34s %-28s %s\t%s\n' "${f[1]}" "$extra" "$origin_tag" "${f[4]}"
+        done | fzf --prompt="worktree> " --with-nth=1 --delimiter=$'\t' \
+                   --preview 'git -C {2} log --oneline -8 2>/dev/null; echo; git -C {2} status --short 2>/dev/null | head -10' \
+                   --preview-window=right:50%:wrap
+      )"
+      [[ -n "$line" ]] && selected_path="${line##*$'\t'}"
     else
       echo "Select a worktree:"
-      local i=1
-      for wt_name in "${matches[@]}"; do
-        echo "  $i) $wt_name"
-        ((i++))
+      local idx=1
+      for rec in "${matches[@]}"; do
+        local -a f=("${(@s:	:)rec}")
+        _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
+        ((idx++))
       done
       echo -n "> "
       read -r selected_num
       if [[ "$selected_num" =~ ^[0-9]+$ ]] && (( selected_num >= 1 && selected_num <= ${#matches[@]} )); then
-        selected="${matches[$selected_num]}"
+        local -a f=("${(@s:	:)matches[$selected_num]}")
+        selected_path="${f[4]}"
       fi
     fi
 
-    if [[ -n "$selected" ]]; then
-      cd "$worktrees_dir/$selected" || return 1
+    if [[ -n "$selected_path" ]]; then
+      cd "$selected_path" || return 1
     fi
     return 0
   fi
@@ -258,12 +505,33 @@ wt() {
     fi
 
     if [[ -n "$name" ]]; then
-      local worktree_path="$worktrees_dir/$name"
-      if [[ ! -d "$worktree_path" ]]; then
-        echo "wt clean: no worktree found at $worktree_path"
+      # Resolve through the scanner rather than assuming
+      # "$worktrees_dir/$name": that assumption is what made `wt clean` unable
+      # to touch Codex worktrees, whose paths don't follow wt's layout. Match
+      # on label/branch/codex-id, exactly like `wt switch`.
+      local worktree_path="" branch="" rec
+      local -a hits=()
+      while IFS= read -r rec; do
+        [[ -z "$rec" ]] && continue
+        local -a f=("${(@s:	:)rec}")
+        [[ "${f[1]}" == *"$name"* || "${f[2]}" == *"$name"* || "${f[3]}" == *"$name"* ]] && hits+=("$rec")
+      done < <(_wt_scan)
+      if [[ ${#hits[@]} -eq 0 ]]; then
+        echo "wt clean: no worktree matching '$name'"
+        return 1
+      elif [[ ${#hits[@]} -gt 1 ]]; then
+        echo "wt clean: '$name' matches ${#hits[@]} worktrees — be more specific:"
+        local idx=1
+        for rec in "${hits[@]}"; do
+          local -a f=("${(@s:	:)rec}")
+          _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
+          ((idx++))
+        done
         return 1
       fi
-      local branch="$name"
+      local -a f=("${(@s:	:)hits[1]}")
+      worktree_path="${f[4]}"
+      branch="${f[2]}"
     else
       local worktree_path="$(pwd)"
       local branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -286,8 +554,14 @@ wt() {
     [[ "$(pwd)" == "$worktree_path" ]] && cd "$main_repo"
     _wt_migrate_threads "$worktree_path" "$main_repo"
     git worktree remove "$worktree_path" --force
-    git branch -D "$branch"
-    echo "Cleaned up worktree '$branch'."
+    # Codex worktrees are frequently on a detached HEAD, so there may be no
+    # branch to delete — `git branch -D ""` would just error out.
+    if [[ -n "$branch" ]]; then
+      git branch -D "$branch"
+      echo "Cleaned up worktree '$branch'."
+    else
+      echo "Cleaned up detached worktree at $worktree_path."
+    fi
     return 0
   fi
 

@@ -3,7 +3,29 @@
 # Completion for wt — git worktree manager.
 
 # Helper: output worktree names for the current repo.
+#
+# This used to just list subdirectories of $WT_WORKTREES_DIR/<repo>, which
+# misses every worktree wt didn't create — notably Codex's, which live at
+# worktrees/codex/<id>/<repo>. It now reuses `_wt_scan` from the wt function
+# itself, so completion offers exactly the labels `wt list` and `wt switch`
+# understand (Codex thread titles included). Keep in sync with wt's scanner:
+# if _wt_scan isn't loaded (wt not sourced in this shell), fall back to the
+# old directory walk rather than offering nothing.
 _wt_worktree_names() {
+  local -a names=()
+  if (( $+functions[_wt_scan] )); then
+    local rec
+    while IFS= read -r rec; do
+      [[ -z "$rec" ]] && continue
+      local -a fields=("${(@s:	:)rec}")
+      # "label:description" is _describe's format; the branch/origin column
+      # disambiguates same-titled worktrees in the completion menu.
+      names+=("${fields[1]}:${fields[2]:-${fields[3]}}")
+    done < <(_wt_scan)
+    _describe -t worktrees 'worktree' names
+    return
+  fi
+
   local wt_dir main_wt repo_name dir
   wt_dir="${WT_WORKTREES_DIR:-}"
   [[ -z "$wt_dir" ]] && return
@@ -12,7 +34,6 @@ _wt_worktree_names() {
   repo_name="$(basename "$main_wt")"
   dir="$wt_dir/$repo_name"
   [[ -d "$dir" ]] || return
-  local -a names=()
   local worktree_dir
   for worktree_dir in "$dir"/*(/); do
     names+=("${worktree_dir#$dir/}")
@@ -21,7 +42,7 @@ _wt_worktree_names() {
 }
 
 local -a subcmds
-subcmds=(create c switch list rename clean push install help)
+subcmds=(create c switch main list rename clean push install help)
 
 _arguments -C \
   '1: :->cmd' \
