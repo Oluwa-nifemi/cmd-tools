@@ -66,7 +66,7 @@ wt install ~/Documents/Programming/worktrees
 | `wt c <name> [base]` | Shortcut for `wt create` |
 | `wt switch [name\|number]` | Switch to a worktree. Substring match against **label, branch, and Codex session id** — `wt switch auth`, `wt switch AI-1557`, and `wt switch 2d54` all work, as does a Codex thread title (`wt switch "Fix Token"`). A bare number picks that row from `wt list`. No argument shows the interactive picker. Single match jumps directly. |
 | `wt main` | Jump back to the main worktree. |
-| `wt list` | Numbered list of all linked worktrees: label, branch, origin tag (`codex <id>` / `external`), and `*` for uncommitted changes. The numbers are what `wt switch <number>` takes. |
+| `wt list` | Numbered list of all linked worktrees: label, branch, origin tag (`codex <id>` / `external`), and `*` for uncommitted changes. Column widths are measured from the rows being shown, so the table stays tight in a repo of short names and doesn't break alignment on one long branch. The numbers are what `wt switch <number>` takes. |
 | `wt rename <old> <new>` | Rename a worktree's directory and its branch atomically. Works with branch names containing `/`. |
 | `wt clean [name] [--force]` | Remove a worktree and delete its branch. Defaults to current worktree. `name` is resolved with the same fuzzy match as `switch` (so it works on Codex worktrees too) and refuses to act on an ambiguous match. Detached worktrees are removed without a branch delete. `--force` skips the uncommitted-changes check. |
 | `wt clean --merged` | Remove all worktrees whose branches have been merged. Checks `gh pr view` (squash-merge aware) then falls back to `git branch --merged`. |
@@ -82,6 +82,14 @@ wt install ~/Documents/Programming/worktrees
   same `_wt_scan` the commands use, so Codex worktrees and thread titles are
   offered too, annotated with their branch/origin
 - `clean` also completes `--force` and `--merged`
+
+Completion offers **every spelling the command accepts**, as three groups:
+the label (Codex thread title or branch), the branch name when it differs from
+the label, the Codex session id, and the row number from `wt list`. This matters
+because zsh completion matches candidates by *prefix* — offering only labels
+meant `wt switch 26<TAB>` completed nothing even though `wt switch 26fe` worked,
+since `26fe` doesn't appear in the label `Clojure Agent Sol`. Titles containing
+spaces are escaped automatically.
 
 The picker (`wt switch` with no unique match) uses `fzf` when available, with a
 preview pane showing recent commits and dirty files for the highlighted

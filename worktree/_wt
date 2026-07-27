@@ -2,27 +2,46 @@
 
 # Completion for wt — git worktree manager.
 
-# Helper: output worktree names for the current repo.
+# Helper: offer every way of naming a worktree that `wt switch` accepts.
 #
 # This used to just list subdirectories of $WT_WORKTREES_DIR/<repo>, which
 # misses every worktree wt didn't create — notably Codex's, which live at
 # worktrees/codex/<id>/<repo>. It now reuses `_wt_scan` from the wt function
-# itself, so completion offers exactly the labels `wt list` and `wt switch`
-# understand (Codex thread titles included). Keep in sync with wt's scanner:
-# if _wt_scan isn't loaded (wt not sourced in this shell), fall back to the
-# old directory walk rather than offering nothing.
+# itself. Keep in sync with wt's scanner: if _wt_scan isn't loaded (wt not
+# sourced in this shell), fall back to the old directory walk rather than
+# offering nothing.
+#
+# Three separate completion groups, because `wt switch` matches on label,
+# branch, AND codex session id — but zsh completion matches candidates by
+# PREFIX. Offering only labels meant typing a session id like `26` completed
+# nothing, even though `wt switch 26fe` works: "26fe" is nowhere in the label
+# "Clojure Agent Sol". Each accepted spelling therefore has to be its own
+# candidate. Row numbers are offered too, so the numbers printed by `wt list`
+# are completable as well.
 _wt_worktree_names() {
   local -a names=()
   if (( $+functions[_wt_scan] )); then
-    local rec
+    local -a labels=() ids=() numbers=()
+    local rec idx=1
     while IFS= read -r rec; do
       [[ -z "$rec" ]] && continue
       local -a fields=("${(@s:	:)rec}")
-      # "label:description" is _describe's format; the branch/origin column
+      local label="${fields[1]}" branch="${fields[2]}" origin="${fields[3]}"
+      local desc="${branch:-detached}"
+      # "value:description" is _describe's format; the description column
       # disambiguates same-titled worktrees in the completion menu.
-      names+=("${fields[1]}:${fields[2]:-${fields[3]}}")
+      labels+=("${label}:${desc}")
+      # Offer the branch as its own candidate when it differs from the label,
+      # so `wt switch AI-15<TAB>` works on a Codex worktree titled something
+      # else entirely.
+      [[ -n "$branch" && "$branch" != "$label" ]] && labels+=("${branch}:${label}")
+      [[ "$origin" == codex:* ]] && ids+=("${origin#codex:}:${label}")
+      numbers+=("${idx}:${label}")
+      ((idx++))
     done < <(_wt_scan)
-    _describe -t worktrees 'worktree' names
+    _describe -t worktrees 'worktree' labels
+    _describe -t codex-ids 'codex session id' ids
+    _describe -t numbers 'row number' numbers
     return
   fi
 

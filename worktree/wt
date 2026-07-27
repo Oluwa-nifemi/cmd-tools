@@ -182,30 +182,70 @@ _wt_scan() {
   unfunction _wt_scan_flush
 }
 
-# Render one scan record as an aligned, human-readable row:
-#   <n>) <label>            codex 2d54   *
-# (`path` is deliberately NOT used as a variable name — see the note in
-# _wt_scan about zsh tying `path` to `PATH`.)
-_wt_row() {
-  local idx="$1" label="$2" branch="$3" origin="$4" wt_path="$5" show_dirty="${6:-1}"
-  local tag="" dirty=""
-  case "$origin" in
-    codex:*) tag="codex ${origin#codex:}" ;;
-    ext)     tag="external" ;;
-    *)       tag="" ;;
+# Turn a scan record's origin field into a display tag.
+_wt_origin_tag() {
+  case "$1" in
+    codex:*) print -r -- "codex ${1#codex:}" ;;
+    ext)     print -r -- "external" ;;
+    *)       print -r -- "" ;;
   esac
-  # Show the branch alongside the label unless they're the same string (which
-  # they are for wt-managed worktrees, where the dir IS the branch name).
-  local detail="$branch"
-  [[ -z "$detail" ]] && detail="detached"
-  [[ "$label" == "$branch" ]] && detail=""
-  # Whether an agent left uncommitted work behind is the single most useful
-  # thing to know before jumping in, so it's shown by default — but it costs a
-  # `git status` per worktree, so callers can switch it off on huge repos.
-  if [[ "$show_dirty" == 1 ]] && ! git -C "$wt_path" diff --quiet HEAD 2>/dev/null; then
-    dirty="*"
-  fi
-  printf '  %2s) %-36s %-32s %-12s %s\n' "$idx" "$label" "$detail" "$tag" "$dirty"
+}
+
+# The branch column, blank when it would just repeat the label (true for
+# wt-managed worktrees, where the directory name IS the branch name).
+_wt_detail() {
+  local label="$1" branch="$2"
+  [[ "$label" == "$branch" ]] && { print -r -- ""; return }
+  print -r -- "${branch:-detached}"
+}
+
+# Render a numbered table from scan records passed on stdin.
+#
+# Column widths are measured from the rows actually being shown rather than
+# hardcoded. Fixed widths looked fine in one repo and bad in the next: padded
+# to 36/32 chars, a repo of short branch names left the dirty marker stranded
+# far off to the right, while a single long branch overflowed its column and
+# shoved every following column out of alignment on that row only.
+#
+# The dirty marker is measured but drawn immediately after the last non-empty
+# column, so it stays visually attached to its row.
+_wt_render() {
+  local -a records=("${(@f)$(cat)}")
+  [[ ${#records[@]} -eq 1 && -z "${records[1]}" ]] && return 0
+
+  local -a labels=() details=() tags=() dirts=()
+  local rec label_w=0 detail_w=0 tag_w=0
+  for rec in "${records[@]}"; do
+    [[ -z "$rec" ]] && continue
+    local -a f=("${(@s:	:)rec}")
+    local label="${f[1]}" detail="$(_wt_detail "${f[1]}" "${f[2]}")" tag="$(_wt_origin_tag "${f[3]}")"
+    local dirty=""
+    # `diff --quiet HEAD` catches staged+unstaged tracked changes without the
+    # cost of a full status; untracked files deliberately don't count as dirty
+    # (build output would flag every worktree).
+    git -C "${f[4]}" diff --quiet HEAD 2>/dev/null || dirty="*"
+    labels+=("$label"); details+=("$detail"); tags+=("$tag"); dirts+=("$dirty")
+    (( ${#label}  > label_w  )) && label_w=${#label}
+    (( ${#detail} > detail_w )) && detail_w=${#detail}
+    (( ${#tag}    > tag_w    )) && tag_w=${#tag}
+  done
+
+  # `row` is declared here, NOT inside the loop: re-running `local row` on an
+  # already-declared local makes zsh *print* the variable (typeset's display
+  # behaviour), which leaks "row=..." lines into the output.
+  local idx row
+  for (( idx = 1; idx <= ${#labels[@]}; idx++ )); do
+    # Build the row, then strip trailing padding so short rows don't carry a
+    # long tail of spaces before the dirty marker.
+    row="$(printf '  %2d) %-*s  %-*s  %-*s' \
+             "$idx" "$label_w" "${labels[$idx]}" \
+             "$detail_w" "${details[$idx]}" "$tag_w" "${tags[$idx]}")"
+    # Strip trailing spaces without needing extendedglob: ${row##*[! ]} is the
+    # trailing run of spaces, and %"..." removes exactly that suffix.
+    row="${row%"${row##*[! ]}"}"
+    [[ -n "${dirts[$idx]}" ]] && row+="  ${dirts[$idx]}"
+    print -r -- "$row"
+  done
 }
 
 wt() {
@@ -323,12 +363,7 @@ wt() {
       return 0
     fi
     echo "$main_worktree  (main)"
-    local idx=1 rec
-    for rec in "${rows[@]}"; do
-      local -a f=("${(@s:	:)rec}")
-      _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
-      ((idx++))
-    done
+    printf '%s\n' "${rows[@]}" | _wt_render
     echo ""
     echo "  * = uncommitted changes.  Jump with: wt switch <number|name>"
     return 0
@@ -397,12 +432,7 @@ wt() {
       [[ -n "$line" ]] && selected_path="${line##*$'\t'}"
     else
       echo "Select a worktree:"
-      local idx=1
-      for rec in "${matches[@]}"; do
-        local -a f=("${(@s:	:)rec}")
-        _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
-        ((idx++))
-      done
+      printf '%s\n' "${matches[@]}" | _wt_render
       echo -n "> "
       read -r selected_num
       if [[ "$selected_num" =~ ^[0-9]+$ ]] && (( selected_num >= 1 && selected_num <= ${#matches[@]} )); then
@@ -521,12 +551,7 @@ wt() {
         return 1
       elif [[ ${#hits[@]} -gt 1 ]]; then
         echo "wt clean: '$name' matches ${#hits[@]} worktrees — be more specific:"
-        local idx=1
-        for rec in "${hits[@]}"; do
-          local -a f=("${(@s:	:)rec}")
-          _wt_row "$idx" "${f[1]}" "${f[2]}" "${f[3]}" "${f[4]}"
-          ((idx++))
-        done
+        printf '%s\n' "${hits[@]}" | _wt_render
         return 1
       fi
       local -a f=("${(@s:	:)hits[1]}")
