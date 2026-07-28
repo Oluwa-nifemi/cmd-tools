@@ -191,60 +191,109 @@ _wt_origin_tag() {
   esac
 }
 
-# The branch column, blank when it would just repeat the label (true for
-# wt-managed worktrees, where the directory name IS the branch name).
-_wt_detail() {
-  local label="$1" branch="$2"
-  [[ "$label" == "$branch" ]] && { print -r -- ""; return }
-  print -r -- "${branch:-detached}"
-}
-
-# Render a numbered table from scan records passed on stdin.
+# Render a numbered, column-headed table from scan records passed on stdin.
 #
-# Column widths are measured from the rows actually being shown rather than
-# hardcoded. Fixed widths looked fine in one repo and bad in the next: padded
-# to 36/32 chars, a repo of short branch names left the dirty marker stranded
-# far off to the right, while a single long branch overflowed its column and
-# shoved every following column out of alignment on that row only.
+# Design notes, both driven by the table being hard to read in practice:
 #
-# The dirty marker is measured but drawn immediately after the last non-empty
-# column, so it stays visually attached to its row.
+#  1. There ARE headers. Without them the columns are guesswork — a bare
+#     "codex 26fe" or a lone "*" tells you nothing about what it means.
+#  2. No cell is ever left blank. The earlier version suppressed the branch
+#     when it equalled the label — true for every wt-created worktree — so most
+#     rows rendered as a name followed by a stretch of whitespace, and the table
+#     looked half-empty and broken. An empty cell reads as missing data. But
+#     repeating the branch verbatim is pure noise when it's identical to the
+#     name, so identical branches collapse to a "-" placeholder: visibly
+#     "same as NAME", not "unknown".
+#
+# Column widths are measured from the rows actually being shown (including the
+# headers), rather than hardcoded: fixed widths looked fine in one repo and bad
+# in the next, stranding the status column far to the right on short names and
+# breaking alignment when one long branch overflowed.
+#
+# A column is dropped entirely when every row (and so the whole column) is
+# empty — e.g. SOURCE in a repo with no agent-created worktrees — so we don't
+# print a header for a column with nothing under it.
 _wt_render() {
   local -a records=("${(@f)$(cat)}")
   [[ ${#records[@]} -eq 1 && -z "${records[1]}" ]] && return 0
 
-  local -a labels=() details=() tags=() dirts=()
-  local rec label_w=0 detail_w=0 tag_w=0
+  local -a names=() branches=() sources=() states=()
+  local rec
   for rec in "${records[@]}"; do
     [[ -z "$rec" ]] && continue
     local -a f=("${(@s:	:)rec}")
-    local label="${f[1]}" detail="$(_wt_detail "${f[1]}" "${f[2]}")" tag="$(_wt_origin_tag "${f[3]}")"
-    local dirty=""
+    names+=("${f[1]}")
+    # "-" means "same as NAME"; "(detached)" means genuinely no branch.
+    if [[ -z "${f[2]}" ]]; then
+      branches+=("(detached)")
+    elif [[ "${f[2]}" == "${f[1]}" ]]; then
+      branches+=("-")
+    else
+      branches+=("${f[2]}")
+    fi
+    sources+=("$(_wt_origin_tag "${f[3]}")")
     # `diff --quiet HEAD` catches staged+unstaged tracked changes without the
     # cost of a full status; untracked files deliberately don't count as dirty
-    # (build output would flag every worktree).
-    git -C "${f[4]}" diff --quiet HEAD 2>/dev/null || dirty="*"
-    labels+=("$label"); details+=("$detail"); tags+=("$tag"); dirts+=("$dirty")
-    (( ${#label}  > label_w  )) && label_w=${#label}
-    (( ${#detail} > detail_w )) && detail_w=${#detail}
-    (( ${#tag}    > tag_w    )) && tag_w=${#tag}
+    # (build output would otherwise flag every worktree). Spelled as a word
+    # rather than a `*` so the column needs no legend to interpret.
+    if git -C "${f[4]}" diff --quiet HEAD 2>/dev/null; then
+      states+=("")
+    else
+      states+=("uncommitted")
+    fi
   done
 
-  # `row` is declared here, NOT inside the loop: re-running `local row` on an
+  local count=${#names[@]}
+  (( count == 0 )) && return 0
+
+  # Measure each column across its header and all its values; width 0 marks a
+  # column that is entirely empty and therefore gets dropped.
+  local -a headers=(NAME BRANCH SOURCE STATUS)
+  local -a widths=(0 0 0 0)
+  local col idx val
+  for col in 1 2 3 4; do
+    local -a column
+    case $col in
+      1) column=("${names[@]}") ;;
+      2) column=("${branches[@]}") ;;
+      3) column=("${sources[@]}") ;;
+      4) column=("${states[@]}") ;;
+    esac
+    local widest=0
+    for val in "${column[@]}"; do (( ${#val} > widest )) && widest=${#val}; done
+    (( widest > 0 )) && (( ${#headers[$col]} > widest )) && widest=${#headers[$col]}
+    widths[$col]=$widest
+  done
+
+  # `line` is declared once, outside the loops: re-running `local` on an
   # already-declared local makes zsh *print* the variable (typeset's display
-  # behaviour), which leaks "row=..." lines into the output.
-  local idx row
-  for (( idx = 1; idx <= ${#labels[@]}; idx++ )); do
-    # Build the row, then strip trailing padding so short rows don't carry a
-    # long tail of spaces before the dirty marker.
-    row="$(printf '  %2d) %-*s  %-*s  %-*s' \
-             "$idx" "$label_w" "${labels[$idx]}" \
-             "$detail_w" "${details[$idx]}" "$tag_w" "${tags[$idx]}")"
-    # Strip trailing spaces without needing extendedglob: ${row##*[! ]} is the
-    # trailing run of spaces, and %"..." removes exactly that suffix.
-    row="${row%"${row##*[! ]}"}"
-    [[ -n "${dirts[$idx]}" ]] && row+="  ${dirts[$idx]}"
-    print -r -- "$row"
+  # behaviour), which leaks "line=..." noise into the output.
+  local line
+
+  # Header, indented to clear the "NNN) " gutter the value rows use (printf
+  # '%3d) ' is five characters wide).
+  line="     "
+  for col in 1 2 3 4; do
+    (( widths[col] == 0 )) && continue
+    line+="$(printf '%-*s  ' "${widths[$col]}" "${headers[$col]}")"
+  done
+  print -r -- "${line%"${line##*[! ]}"}"
+
+  for (( idx = 1; idx <= count; idx++ )); do
+    line="$(printf '%3d) ' "$idx")"
+    for col in 1 2 3 4; do
+      (( widths[col] == 0 )) && continue
+      case $col in
+        1) val="${names[$idx]}" ;;
+        2) val="${branches[$idx]}" ;;
+        3) val="${sources[$idx]}" ;;
+        4) val="${states[$idx]}" ;;
+      esac
+      line+="$(printf '%-*s  ' "${widths[$col]}" "$val")"
+    done
+    # Strip trailing padding without needing extendedglob: ${line##*[! ]} is
+    # the trailing run of spaces, and %"..." removes exactly that suffix.
+    print -r -- "${line%"${line##*[! ]}"}"
   done
 }
 
@@ -363,9 +412,21 @@ wt() {
       return 0
     fi
     echo "$main_worktree  (main)"
-    printf '%s\n' "${rows[@]}" | _wt_render
+    local table
+    table="$(printf '%s\n' "${rows[@]}" | _wt_render)"
+    print -r -- "$table"
     echo ""
-    echo "  * = uncommitted changes.  Jump with: wt switch <number|name>"
+    # Only explain the notation actually on screen — _wt_render drops columns
+    # that are entirely empty, and a legend for an absent column is just noise.
+    local -a legend=()
+    # Match a "-" standing alone as a whole cell, not a hyphen inside a branch
+    # name like durable-exec/branch2-subagent.
+    if print -r -- "$table" | grep -qE '( -$| - +)'; then
+      legend+=("BRANCH '-' = same as NAME")
+    fi
+    [[ "$table" == *uncommitted* ]] && legend+=("STATUS = tracked changes not committed")
+    (( ${#legend[@]} )) && echo "  ${(j:.  :)legend}."
+    echo "  Jump with: wt switch <number|name|branch|codex-id>"
     return 0
   fi
 

@@ -66,13 +66,36 @@ wt install ~/Documents/Programming/worktrees
 | `wt c <name> [base]` | Shortcut for `wt create` |
 | `wt switch [name\|number]` | Switch to a worktree. Substring match against **label, branch, and Codex session id** — `wt switch auth`, `wt switch AI-1557`, and `wt switch 2d54` all work, as does a Codex thread title (`wt switch "Fix Token"`). A bare number picks that row from `wt list`. No argument shows the interactive picker. Single match jumps directly. |
 | `wt main` | Jump back to the main worktree. |
-| `wt list` | Numbered list of all linked worktrees: label, branch, origin tag (`codex <id>` / `external`), and `*` for uncommitted changes. Column widths are measured from the rows being shown, so the table stays tight in a repo of short names and doesn't break alignment on one long branch. The numbers are what `wt switch <number>` takes. |
+| `wt list` | Numbered, column-headed table of all linked worktrees: `NAME`, `BRANCH`, `SOURCE` (`codex <id>` / `external`), `STATUS`. The numbers are what `wt switch <number>` takes. |
 | `wt rename <old> <new>` | Rename a worktree's directory and its branch atomically. Works with branch names containing `/`. |
 | `wt clean [name] [--force]` | Remove a worktree and delete its branch. Defaults to current worktree. `name` is resolved with the same fuzzy match as `switch` (so it works on Codex worktrees too) and refuses to act on an ambiguous match. Detached worktrees are removed without a branch delete. `--force` skips the uncommitted-changes check. |
 | `wt clean --merged` | Remove all worktrees whose branches have been merged. Checks `gh pr view` (squash-merge aware) then falls back to `git branch --merged`. |
 | `wt push [remote-branch]` | Push to remote, defaults to same branch name. |
 | `wt install <path>` | Set `WT_WORKTREES_DIR`, persist as an export in `~/.zshrc`. |
 | `wt --help` / `wt -h` | Show usage. |
+
+## `wt list` table
+
+Columns are headed, so no cell needs a legend to interpret:
+
+| Column | Meaning |
+|---|---|
+| `NAME` | What to type: Codex thread title, or the branch/dir name |
+| `BRANCH` | The checked-out branch. `-` means *same as NAME*; `(detached)` means no branch |
+| `SOURCE` | `codex <id>` for a Codex worktree, `external` for another non-`wt` one, blank for `wt`'s own |
+| `STATUS` | `uncommitted` when tracked files have changes. Untracked files don't count — build output would otherwise flag every worktree |
+
+Two rendering rules, both learned from the table reading badly:
+
+- **No blank cells.** An earlier version blanked `BRANCH` whenever it equalled the
+  name — true for every `wt`-created worktree — so most rows were a name followed
+  by a stretch of whitespace and the table looked half-empty. Identical branches
+  now collapse to `-`, which reads as "same as NAME" rather than "missing".
+- **Widths measured, columns dropped.** Column widths come from the rows actually
+  being shown (headers included), and a column that is empty for every row is
+  omitted entirely — a repo with no agent worktrees shows just `NAME` and
+  `BRANCH`, with no empty `SOURCE`/`STATUS` headers. The footer legend likewise
+  only explains notation that's on screen.
 
 ## Tab completion
 
