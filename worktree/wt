@@ -213,11 +213,15 @@ _wt_origin_tag() {
 # A column is dropped entirely when every row (and so the whole column) is
 # empty — e.g. SOURCE in a repo with no agent-created worktrees — so we don't
 # print a header for a column with nothing under it.
+#
+# There is deliberately no dirty/uncommitted column: it cost a `git diff` per
+# worktree on every `wt list`, and `wt list` is for finding a worktree, not for
+# auditing its state. Check that in the worktree itself.
 _wt_render() {
   local -a records=("${(@f)$(cat)}")
   [[ ${#records[@]} -eq 1 && -z "${records[1]}" ]] && return 0
 
-  local -a names=() branches=() sources=() states=()
+  local -a names=() branches=() sources=()
   local rec
   for rec in "${records[@]}"; do
     [[ -z "$rec" ]] && continue
@@ -232,15 +236,6 @@ _wt_render() {
       branches+=("${f[2]}")
     fi
     sources+=("$(_wt_origin_tag "${f[3]}")")
-    # `diff --quiet HEAD` catches staged+unstaged tracked changes without the
-    # cost of a full status; untracked files deliberately don't count as dirty
-    # (build output would otherwise flag every worktree). Spelled as a word
-    # rather than a `*` so the column needs no legend to interpret.
-    if git -C "${f[4]}" diff --quiet HEAD 2>/dev/null; then
-      states+=("")
-    else
-      states+=("uncommitted")
-    fi
   done
 
   local count=${#names[@]}
@@ -248,16 +243,15 @@ _wt_render() {
 
   # Measure each column across its header and all its values; width 0 marks a
   # column that is entirely empty and therefore gets dropped.
-  local -a headers=(NAME BRANCH SOURCE STATUS)
-  local -a widths=(0 0 0 0)
+  local -a headers=(NAME BRANCH SOURCE)
+  local -a widths=(0 0 0)
   local col idx val
-  for col in 1 2 3 4; do
+  for col in 1 2 3; do
     local -a column
     case $col in
       1) column=("${names[@]}") ;;
       2) column=("${branches[@]}") ;;
       3) column=("${sources[@]}") ;;
-      4) column=("${states[@]}") ;;
     esac
     local widest=0
     for val in "${column[@]}"; do (( ${#val} > widest )) && widest=${#val}; done
@@ -273,7 +267,7 @@ _wt_render() {
   # Header, indented to clear the "NNN) " gutter the value rows use (printf
   # '%3d) ' is five characters wide).
   line="     "
-  for col in 1 2 3 4; do
+  for col in 1 2 3; do
     (( widths[col] == 0 )) && continue
     line+="$(printf '%-*s  ' "${widths[$col]}" "${headers[$col]}")"
   done
@@ -281,13 +275,12 @@ _wt_render() {
 
   for (( idx = 1; idx <= count; idx++ )); do
     line="$(printf '%3d) ' "$idx")"
-    for col in 1 2 3 4; do
+    for col in 1 2 3; do
       (( widths[col] == 0 )) && continue
       case $col in
         1) val="${names[$idx]}" ;;
         2) val="${branches[$idx]}" ;;
         3) val="${sources[$idx]}" ;;
-        4) val="${states[$idx]}" ;;
       esac
       line+="$(printf '%-*s  ' "${widths[$col]}" "$val")"
     done
@@ -418,14 +411,11 @@ wt() {
     echo ""
     # Only explain the notation actually on screen — _wt_render drops columns
     # that are entirely empty, and a legend for an absent column is just noise.
-    local -a legend=()
     # Match a "-" standing alone as a whole cell, not a hyphen inside a branch
     # name like durable-exec/branch2-subagent.
     if print -r -- "$table" | grep -qE '( -$| - +)'; then
-      legend+=("BRANCH '-' = same as NAME")
+      echo "  BRANCH '-' = same as NAME."
     fi
-    [[ "$table" == *uncommitted* ]] && legend+=("STATUS = tracked changes not committed")
-    (( ${#legend[@]} )) && echo "  ${(j:.  :)legend}."
     echo "  Jump with: wt switch <number|name|branch|codex-id>"
     return 0
   fi

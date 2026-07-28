@@ -66,7 +66,7 @@ wt install ~/Documents/Programming/worktrees
 | `wt c <name> [base]` | Shortcut for `wt create` |
 | `wt switch [name\|number]` | Switch to a worktree. Substring match against **label, branch, and Codex session id** — `wt switch auth`, `wt switch AI-1557`, and `wt switch 2d54` all work, as does a Codex thread title (`wt switch "Fix Token"`). A bare number picks that row from `wt list`. No argument shows the interactive picker. Single match jumps directly. |
 | `wt main` | Jump back to the main worktree. |
-| `wt list` | Numbered, column-headed table of all linked worktrees: `NAME`, `BRANCH`, `SOURCE` (`codex <id>` / `external`), `STATUS`. The numbers are what `wt switch <number>` takes. |
+| `wt list` | Numbered, column-headed table of all linked worktrees: `NAME`, `BRANCH`, `SOURCE` (`codex <id>` / `external`). The numbers are what `wt switch <number>` takes. |
 | `wt rename <old> <new>` | Rename a worktree's directory and its branch atomically. Works with branch names containing `/`. |
 | `wt clean [name] [--force]` | Remove a worktree and delete its branch. Defaults to current worktree. `name` is resolved with the same fuzzy match as `switch` (so it works on Codex worktrees too) and refuses to act on an ambiguous match. Detached worktrees are removed without a branch delete. `--force` skips the uncommitted-changes check. |
 | `wt clean --merged` | Remove all worktrees whose branches have been merged. Checks `gh pr view` (squash-merge aware) then falls back to `git branch --merged`. |
@@ -83,7 +83,16 @@ Columns are headed, so no cell needs a legend to interpret:
 | `NAME` | What to type: Codex thread title, or the branch/dir name |
 | `BRANCH` | The checked-out branch. `-` means *same as NAME*; `(detached)` means no branch |
 | `SOURCE` | `codex <id>` for a Codex worktree, `external` for another non-`wt` one, blank for `wt`'s own |
-| `STATUS` | `uncommitted` when tracked files have changes. Untracked files don't count — build output would otherwise flag every worktree |
+
+There is deliberately **no dirty/uncommitted column**. It cost a `git diff` per
+worktree on every invocation — 2.6s vs 0.24s in `devops-monorepo`, an 11×
+difference — and `wt list` exists to *find* a worktree, not to audit its state.
+
+`SOURCE` earns its place because Codex thread titles are **not unique**: the
+session index has titles like `hi` six times over. When two worktrees carry the
+same title, the session id in `SOURCE` is the only thing distinguishing them —
+and it's directly typeable (`wt switch 26fe`). It's dropped automatically in
+repos with no agent-created worktrees.
 
 Two rendering rules, both learned from the table reading badly:
 
