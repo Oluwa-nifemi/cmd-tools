@@ -13,12 +13,16 @@ set -uo pipefail
 : "${WT_CODEX_LINK_IGNORED:=local AGENTS.md .codex .agents}"
 : "${WT_LINK_IGNORED_RECURSIVE:=0}"
 
+warn() {
+  echo "wt-link-ignored: warning: $*" >&2
+}
+
 current_worktree="$(git rev-parse --show-toplevel)"
 main_worktree="$(git worktree list --porcelain | awk '/^worktree / { print $2; exit }')"
 
 if [[ -z "$main_worktree" ]]; then
-  echo "wt-link-ignored: could not detect main worktree" >&2
-  exit 1
+  warn "could not detect main worktree; skipping link setup"
+  exit 0
 fi
 
 if [[ "$current_worktree" == "$main_worktree" ]]; then
@@ -51,52 +55,48 @@ for pattern in ${=WT_LINK_IGNORED} ${=WT_CODEX_LINK_IGNORED}; do
     fi
     linked_paths[$relative_path]=1
 
+    # Never touch paths that are actually tracked in git. `git worktree add`
+    # already checks these out correctly from the index; symlinking over a
+    # tracked path (e.g. a committed .claude/ dir) makes git see every file
+    # under it as deleted in this worktree's diff, since the tracked path is
+    # now a symlink pointing elsewhere. This is only for ignored/untracked
+    # shared config, so skip tracked matches entirely.
+    if git -C "$main_worktree" ls-files --error-unmatch -- "$relative_path" >/dev/null 2>&1; then
+      continue
+    fi
+    if [[ -d "$match" ]] && [[ -n "$(git -C "$main_worktree" ls-files -- "$relative_path" | head -n1)" ]]; then
+      continue
+    fi
+
     if [[ -e "$target_path" || -L "$target_path" ]]; then
-      # Codex may create the worktree from a branch where some of these names
-      # are real tracked files already (CLAUDE.md is the common case). Those
-      # should be left alone; the helper is only responsible for bringing over
-      # ignored/local state that Git would not normally populate.
+      # Codex setup is best-effort glue. It runs before the agent starts, so a
+      # stale tracked AGENTS.md, copied .codex directory, or partial local/
+      # directory should never abort the whole worktree. If the path is not
+      # already the intended link/hardlink, remove it and recreate it from the
+      # main worktree. This can dirty the disposable worktree, but that is less
+      # surprising than losing repo-local instructions, skills, or local notes.
       if [[ "$target_path" -ef "$match" ]] ||
-         [[ "$(readlink "$target_path" 2>/dev/null || true)" == "$match" ]] ||
-         [[ -f "$match" && -f "$target_path" && ! -L "$target_path" && ! -L "$match" && "$(cmp -s "$match" "$target_path"; echo $?)" -eq 0 ]] ||
-         git ls-files --error-unmatch -- "$relative_path" >/dev/null 2>&1; then
+         [[ "$(readlink "$target_path" 2>/dev/null || true)" == "$match" ]]; then
         continue
       fi
 
-      if [[ -d "$match" && -d "$target_path" && ! -L "$target_path" ]]; then
-        # Codex can pre-populate ignored directories before this setup script
-        # runs. For `local/` that defeats the point of this helper: future notes
-        # would land in the disposable worktree instead of the canonical main
-        # worktree. Only replace the directory when every existing file is also
-        # present in the main worktree, so we do not delete unique worktree-only
-        # state by accident.
-        has_unique_existing_path=0
-        for existing_path in "$target_path"/**/*(ND); do
-          existing_relative_path="${existing_path#$target_path/}"
-          source_existing_path="$match/$existing_relative_path"
-          if [[ ! -e "$source_existing_path" && ! -L "$source_existing_path" ]]; then
-            has_unique_existing_path=1
-            break
-          fi
-        done
-
-        if [[ "$has_unique_existing_path" -eq 0 ]]; then
-          rm -rf "$target_path"
-        else
-          echo "wt-link-ignored: refusing to replace directory with unique worktree-only paths: $relative_path" >&2
-          exit 1
-        fi
-      else
-        echo "wt-link-ignored: refusing to overwrite existing path: $relative_path" >&2
-        exit 1
+      if ! rm -rf "$target_path"; then
+        warn "could not replace existing path: $relative_path"
+        continue
       fi
     fi
 
-    mkdir -p "$(dirname "$target_path")"
+    if ! mkdir -p "$(dirname "$target_path")"; then
+      warn "could not create parent directory for: $relative_path"
+      continue
+    fi
+
     if [[ -d "$match" || "$relative_path" == "AGENTS.md" ]]; then
-      ln -s "$match" "$target_path"
+      ln -s "$match" "$target_path" || warn "could not symlink: $relative_path"
     else
-      ln "$match" "$target_path"
+      ln "$match" "$target_path" || warn "could not hard-link: $relative_path"
     fi
   done
 done
+
+exit 0
