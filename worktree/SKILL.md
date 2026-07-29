@@ -14,6 +14,24 @@ A shell function for creating and managing git worktrees with minimal friction. 
 
 Files are **hard-linked** (same inode), so edits in any worktree are visible everywhere. This is intentional — these are shared config files. Directories in the glob list get **symlinked** (macOS can't hard-link directories).
 
+Linking uses `find ... -prune` rather than a zsh `**/` glob. This matters on large
+repos: the glob version took **~54 seconds** in `devops-monorepo` (6.8 GB, 38k
+directories), all of it *after* `wt create` had printed its git output and `cd`'d
+in — which reads exactly like a hang. It's now ~0.5s.
+
+The old code's `(^e:...:)` glob qualifier claimed to exclude `.git`/`node_modules`
+from the walk, but a glob qualifier **filters matches after the walk** — zsh still
+descended into every directory and then discarded results. `-prune` genuinely
+stops descending (38,599 directories walked → 5,782).
+
+The prune list covers `.git`, `node_modules`, `.venv`, `venv`, `target`, `dist`,
+`build`, `__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.cpcache`,
+`.tox`, `.next`, `.gradle`, `.terraform`, `.cache`. `.venv` was the real offender
+and wasn't excluded before: it accounts for 36,480 of `devops-monorepo`'s 38,599
+directories, while `node_modules` — which *was* excluded — doesn't exist there.
+Pruning it also stops vendored `CLAUDE.md` files from site-packages being linked
+into every worktree (35 spurious links before, 0 now).
+
 ## Agent-created worktrees (Codex)
 
 `wt` also manages worktrees it didn't create. Codex puts its worktrees at

@@ -682,27 +682,67 @@ wt() {
     git worktree add "$worktrees_dir/$name" -b "$name" "$base" || return 1
   fi
   cd "$worktrees_dir/$name" || return 1
-  # Bring each WT_LINK_IGNORED glob over from the main worktree. Files get
-  # hard-linked so they behave like real files to tools that don't follow
-  # symlinks; directories are symlinked (macOS can't hard-link directories).
-  # Globs are evaluated against the main worktree.
+  _wt_link_ignored "$root" .
+}
+
+# Hard-link (files) or symlink (directories) each WT_LINK_IGNORED glob from the
+# main worktree $root into the worktree $dest.
+#
+# Files are hard-linked so they behave like real files to tools that don't
+# follow symlinks; directories are symlinked because macOS can't hard-link a
+# directory. Globs are matched against the main worktree.
+#
+# This is `find`-based rather than a zsh `**/` glob, and that is the whole
+# point. The glob version hung for ~13 SECONDS PER PATTERN on a large repo
+# (devops-monorepo: 6.8 GB, 38k directories) — five patterns, so over a minute
+# of apparent hang after `wt create` had already printed its git output and
+# cd'ed in, which reads exactly like a lockup.
+#
+# The old code carried a comment claiming its `(^e:...:)` qualifier "excludes"
+# .git and node_modules so they aren't walked. That was wrong: a glob qualifier
+# FILTERS MATCHES AFTER THE WALK. zsh still descended into every directory,
+# then discarded results. `find ... -prune` genuinely stops descending, which is
+# what makes it ~50x faster here (38,599 dirs walked -> 5,782).
+#
+# The prune list also matters more than the old exclusions suggested: in
+# devops-monorepo, `.venv` accounts for 36,480 of those 38,599 directories and
+# wasn't excluded at all, while node_modules — which was — doesn't exist. Prune
+# heavy dependency/build/cache trees; none of them hold the dotfiles we link.
+_wt_link_ignored() {
+  local root="$1" dest="$2"
+  local -a prune_names=(
+    .git node_modules .venv venv target dist build
+    __pycache__ .mypy_cache .pytest_cache .ruff_cache .cpcache .tox
+    .next .gradle .terraform .cache
+  )
+
+  # Assemble `-name X -o -name Y ...` for the prune branch.
+  local -a prune_expr=()
+  local prune_name
+  for prune_name in "${prune_names[@]}"; do
+    (( ${#prune_expr[@]} )) && prune_expr+=(-o)
+    prune_expr+=(-name "$prune_name")
+  done
+
   local pattern match rel
   for pattern in ${=WT_LINK_IGNORED}; do
-    # `**/` makes each glob recurse into subdirectories (zsh extended glob),
-    # so nested files like `apps/foo/.env` get linked too, not just top-level
-    # matches. (N) suppresses "no match" errors when a pattern hits nothing.
-    # The `^e:...:` qualifier excludes anything under .git or node_modules —
-    # those trees are huge and never hold env files, so walking them on every
-    # `wt create` is pure wasted time. (zsh glob qualifiers: `e:cmd:` keeps
-    # matches where cmd is true against $REPLY; a leading `^` negates it.)
-    for match in $root/**/${~pattern}(ND^e:'[[ $REPLY == */.git/* || $REPLY == */node_modules/* ]]':); do
+    # -print0/read -d '' so paths with spaces survive. The pattern is matched
+    # against the basename, mirroring the old glob's `**/<pattern>` semantics:
+    # a nested `apps/foo/.env` is linked at the same relative path.
+    while IFS= read -r -d '' match; do
       rel="${match#$root/}"
-      mkdir -p "$(dirname "./$rel")"
+      [[ "$rel" == "$match" ]] && continue
+      # Never descend into a directory we just symlinked: a linked `.claude`
+      # would otherwise be re-found through its own symlink and produce
+      # `.claude/.claude`. -P keeps find from following links in $root, but the
+      # destination side needs its own guard for repeat runs.
+      [[ -L "$dest/${rel%%/*}" ]] && continue
+      mkdir -p "$dest/${rel:h}"
       if [[ -d "$match" ]]; then
-        ln -sfn "$match" "./$rel"
+        ln -sfn "$match" "$dest/$rel"
       else
-        ln -f "$match" "./$rel"
+        ln -f "$match" "$dest/$rel"
       fi
-    done
+    done < <(find -P "$root" \( "${prune_expr[@]}" \) -prune -o -name "$pattern" -print0 2>/dev/null)
   done
 }
