@@ -9,7 +9,7 @@
 
 set -uo pipefail
 
-: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk .zed}"
 : "${WT_CODEX_LINK_IGNORED:=local AGENTS.md .codex .agents}"
 : "${WT_LINK_IGNORED_RECURSIVE:=0}"
 

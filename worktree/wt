@@ -13,7 +13,7 @@
 #                     (default: "CLAUDE.md CLAUDE.local.md .claude .env* .rtk")
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
-: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk .zed}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Worktree discovery
