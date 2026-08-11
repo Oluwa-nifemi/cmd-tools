@@ -11,6 +11,8 @@
 #   WT_LINK_IGNORED   space-separated globs, relative to the main worktree,
 #                     that get hard-linked into each new worktree
 #                     (default: "CLAUDE.md CLAUDE.local.md .claude .env* .rtk")
+#   WT_POST_CREATE_HOOK optional executable called after setup with the new
+#                     worktree path as its first argument
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
 : "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk .zed}"
@@ -683,6 +685,28 @@ wt() {
   fi
   cd "$worktrees_dir/$name" || return 1
   _wt_link_ignored "$root" .
+  _wt_run_post_create_hook "$root" "$PWD"
+}
+
+# Keep this contract in sync with worktree/wt-link-ignored. The hook is invoked
+# directly rather than through eval so paths and arguments cannot become shell
+# code. Hooks own their execution model: a slow hook can run synchronously,
+# while tasks such as cache warming can background themselves and return.
+_wt_run_post_create_hook() {
+  local main_worktree="$1" new_worktree="$2"
+  [[ -z "${WT_POST_CREATE_HOOK:-}" ]] && return 0
+
+  if [[ ! -x "$WT_POST_CREATE_HOOK" ]]; then
+    echo "wt: warning: WT_POST_CREATE_HOOK is not executable: $WT_POST_CREATE_HOOK" >&2
+    return 0
+  fi
+
+  WT_MAIN_WORKTREE="$main_worktree" \
+    WT_NEW_WORKTREE="$new_worktree" \
+    WT_REPO_NAME="${main_worktree:t}" \
+    WT_BRANCH="$(git -C "$new_worktree" branch --show-current 2>/dev/null)" \
+    "$WT_POST_CREATE_HOOK" "$new_worktree" ||
+      echo "wt: warning: post-create hook failed: $WT_POST_CREATE_HOOK" >&2
 }
 
 # Hard-link (files) or symlink (directories) each WT_LINK_IGNORED glob from the

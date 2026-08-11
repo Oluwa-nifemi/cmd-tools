@@ -99,4 +99,21 @@ for pattern in ${=WT_LINK_IGNORED} ${=WT_CODEX_LINK_IGNORED}; do
   done
 done
 
+# Keep this invocation contract in sync with `_wt_run_post_create_hook` in
+# worktree/wt. Codex owns worktree creation, so this script is its equivalent
+# post-create boundary. The hook may background long-running work and return
+# immediately; failures are warnings because the worktree itself is usable.
+if [[ -n "${WT_POST_CREATE_HOOK:-}" ]]; then
+  if [[ ! -x "$WT_POST_CREATE_HOOK" ]]; then
+    warn "WT_POST_CREATE_HOOK is not executable: $WT_POST_CREATE_HOOK"
+  else
+    WT_MAIN_WORKTREE="$main_worktree" \
+      WT_NEW_WORKTREE="$current_worktree" \
+      WT_REPO_NAME="${main_worktree:t}" \
+      WT_BRANCH="$(git -C "$current_worktree" branch --show-current 2>/dev/null)" \
+      "$WT_POST_CREATE_HOOK" "$current_worktree" ||
+        warn "post-create hook failed: $WT_POST_CREATE_HOOK"
+  fi
+fi
+
 exit 0

@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# Warm clojure-lsp only for worktrees attached to the local ardoq-api checkout.
+# Matching Git's common directory is stricter than matching a folder or remote
+# name: unrelated clones named ardoq-api should not trigger a large background
+# analysis unexpectedly.
+
+worktree_path=$1
+expected_git_dir="/Users/Oluwanifemi/Documents/work/ardoq-api/.git"
+
+actual_git_dir=$(
+  git -C "$worktree_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
+) || exit 0
+
+[ "$actual_git_dir" = "$expected_git_dir" ] || exit 0
+command -v clojure-lsp >/dev/null 2>&1 || exit 0
+
+# The hook must not delay worktree creation. `nohup` detaches it from the
+# creating shell, and `nice` keeps an immediate editor startup responsive if
+# Zed starts its own clojure-lsp process before this warmup finishes.
+log_key=$(printf '%s' "$worktree_path" | cksum | awk '{print $1}')
+log_path="/tmp/clojure-lsp-warm-$log_key.log"
+
+nohup nice -n 10 clojure-lsp references \
+  --project-root "$worktree_path" \
+  --from ardoq.core/id \
+  --raw \
+  >"$log_path" \
+  2>&1 &
+
+exit 0
