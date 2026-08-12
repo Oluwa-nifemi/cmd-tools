@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""List Clojure REPL and Clojure LSP JVM memory use."""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+
+def usage() -> None:
+    print("Usage: repl-memory [--kill <index>]", file=sys.stderr)
+
+
+def output(command: list[str]) -> str:
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+
+
+def process_group(process_id: str) -> str:
+    return output(["ps", "-o", "pgid=", "-p", process_id]).strip()
+
+
+def footprint(process_id: str) -> tuple[float, str] | None:
+    match = re.search(
+        r"^Physical footprint:\s+(\S+)",
+        output(["vmmap", "-summary", process_id]),
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+
+    value = match.group(1)
+    if value.endswith("G"):
+        return float(value[:-1]) * 1024, value
+    if value.endswith("M"):
+        return float(value[:-1]), value
+    return None
+
+
+def process_working_directory(process_id: str) -> str:
+    for line in output(["lsof", "-a", "-p", process_id, "-d", "cwd", "-Fn"]).splitlines():
+        if line.startswith("n"):
+            return line[1:]
+    return "unknown"
+
+
+def app_listener_groups() -> set[str]:
+    groups = set()
+    for row in output(["lsof", "-nP", "-iTCP:3000", "-sTCP:LISTEN"]).splitlines()[1:]:
+        fields = row.split()
+        if len(fields) >= 2:
+            group = process_group(fields[1])
+            if group:
+                groups.add(group)
+    return groups
+
+
+arguments = sys.argv[1:]
+if arguments[:1] == ["--kill"] and len(arguments) == 2 and arguments[1].isdigit():
+    kill_index = int(arguments[1])
+elif arguments:
+    usage()
+    raise SystemExit(2)
+else:
+    kill_index = None
+
+registry_path = os.path.expanduser("~/.cache/zed-clojure-repl/registry.json")
+try:
+    with open(registry_path) as handle:
+        registry = json.load(handle).get("worktrees", {})
+except (OSError, json.JSONDecodeError):
+    registry = {}
+
+# The registry stores shell wrapper PIDs. Group Java children under that
+# wrapper, because one REPL can have more than one JVM-related process.
+processes_by_group: dict[str, list[tuple[str, str]]] = {}
+for row in output(["ps", "-axo", "pid=,pgid=,comm="]).splitlines():
+    fields = row.split(maxsplit=2)
+    if len(fields) == 3:
+        process_id, group, command = fields
+        processes_by_group.setdefault(group, []).append((process_id, command))
+
+rows: list[tuple[float, str, str, str, str]] = []
+listener_groups = app_listener_groups()
+for worktree, entry in registry.items():
+    group = process_group(str(entry.get("pid", "")))
+    if not group:
+        continue
+
+    measurements = [
+        footprint(process_id)
+        for process_id, command in processes_by_group.get(group, [])
+        if command.endswith("/java")
+    ]
+    total = sum(measurement[0] for measurement in measurements if measurement)
+    rows.append((total, "REPL", worktree, group, "yes" if group in listener_groups else "no"))
+
+# LSPs are direct Java children of Zed, not registry entries. Their cwd is the
+# project Zed used when it launched the server, which exposes stale servers.
+for processes in processes_by_group.values():
+    for process_id, command in processes:
+        if not command.endswith("/java"):
+            continue
+        if "clojure-lsp-standalone.jar" not in output(
+            ["ps", "-p", process_id, "-o", "command="]
+        ):
+            continue
+        measurement = footprint(process_id)
+        if measurement:
+            rows.append(
+                (
+                    measurement[0],
+                    "LSP",
+                    process_working_directory(process_id),
+                    process_id,
+                    "-",
+                )
+            )
+
+if not rows:
+    print("No Clojure JVMs found.")
+    raise SystemExit
+
+rows.sort(reverse=True)
+
+if kill_index is not None:
+    if kill_index < 1 or kill_index > len(rows):
+        print(f"No process at index {kill_index}.", file=sys.stderr)
+        raise SystemExit(1)
+    _, process_type, worktree, target, _ = rows[kill_index - 1]
+    if process_type == "REPL":
+        os.killpg(int(target), 15)
+    else:
+        os.kill(int(target), 15)
+    print(f"Stopped {process_type} {kill_index}: {worktree}")
+    raise SystemExit
+
+print(f"{'#':>2}  {'MEMORY':>7}  {'TYPE':<4}  {'3000':<4}  WORKTREE")
+for index, (total, process_type, worktree, _, owns_port) in enumerate(rows, start=1):
+    total_label = f"{total / 1024:.1f}G" if total >= 1024 else f"{total:.0f}M"
+    short_worktree = worktree.replace(os.path.expanduser("~"), "~", 1)
+    print(f"{index:>2}  {total_label:>7}  {process_type:<4}  {owns_port:<4}  {short_worktree}")
+
+print("\nStop one: repl-memory --kill <index>")
