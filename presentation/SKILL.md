@@ -19,8 +19,20 @@ the main task.
    - the source files named in the brief;
    - [renderer-guide.md](references/renderer-guide.md);
    - the requested output path.
-4. Tell the renderer to read the renderer guide, select the required template,
-   render the artifact, and run the guide's focused checks.
+4. Tell the renderer to run these commands exactly:
+
+   ```bash
+   python3 scripts/presentation_artifact.py init \
+     --format <deck|page> \
+     --output <path>
+   # Render the artifact.
+   python3 scripts/presentation_artifact.py verify \
+     --format <deck|page> \
+     --output <path>
+   ```
+
+   The renderer must not read the script or either template. The initializer
+   selects the template and backs up an existing output automatically.
 5. Report the completed artifact and the renderer's verification result.
 
 For a direct user request, always delegate the rendering. Do not use an
@@ -35,9 +47,13 @@ dispatch the renderer as described above. It must not read:
 - `template.html`
 - `page-template.html`
 - `references/renderer-guide.md`
+- the renderer's format-specific references
 
 ## Resource loading
 
 - Main agent and caller: `brief-format.md` only.
-- Renderer subagent: `references/renderer-guide.md`, then only the selected
-  template (`template.html` for a deck or `page-template.html` for a page).
+- Renderer subagent: `references/renderer-guide.md`,
+  `references/content-quality.md`, one selected format reference, and
+  `references/verification.md`.
+- `scripts/presentation_artifact.py` selects and copies the template. The
+  renderer does not need to read either template.
