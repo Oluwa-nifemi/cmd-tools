@@ -65,7 +65,7 @@ Configuration is via environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `WT_WORKTREES_DIR` | Base directory for all worktrees | Must be set (via `wt install`) |
-| `WT_LINK_IGNORED` | Space-separated globs to hard-link from main worktree | `CLAUDE.md CLAUDE.local.md .claude .env* .rtk` |
+| `WT_LINK_IGNORED` | Space-separated globs to hard-link from main worktree | `CLAUDE.md CLAUDE.local.md .claude .env* .zed` |
 
 ```bash
 # Source it (add to .zshrc)

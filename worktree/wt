@@ -10,12 +10,12 @@
 #                     once and it'll write the export into ~/.zshrc for you)
 #   WT_LINK_IGNORED   space-separated globs, relative to the main worktree,
 #                     that get hard-linked into each new worktree
-#                     (default: "CLAUDE.md CLAUDE.local.md .claude .env* .rtk")
+#                     (default: "CLAUDE.md CLAUDE.local.md .claude .env*")
 #   WT_POST_CREATE_HOOK optional executable called after setup with the new
 #                     worktree path as its first argument
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
-: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .rtk .zed}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .zed}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Worktree discovery
