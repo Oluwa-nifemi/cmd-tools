@@ -10,6 +10,10 @@
 # via terminal-notifier on completion.
 #
 # Configuration:
+#   CI_WATCH_GH_TOKEN
+#                     GitHub token used only by cw. This is passed to the
+#                     GitHub CLI as GH_TOKEN, which takes precedence over a
+#                     global GITHUB_TOKEN.
 #   CW_REPO_ALIASES   Space-separated "alias:owner/repo" pairs. Example:
 #                       export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
 #                     Used to expand the optional first argument.
@@ -34,6 +38,12 @@
 # Requires: gh, jq, terminal-notifier (macOS)
 
 set -uo pipefail
+
+# Keep a limited CI token scoped to cw instead of exporting GITHUB_TOKEN, which
+# would also change authentication for every other GitHub CLI command.
+if [[ -n "${CI_WATCH_GH_TOKEN:-}" ]]; then
+  export GH_TOKEN="$CI_WATCH_GH_TOKEN"
+fi
 
 usage() {
   cat <<'EOF'
@@ -60,6 +70,9 @@ Usage:
 
 Configure aliases via CW_REPO_ALIASES, e.g.:
   export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
+
+Configure a GitHub token used only by cw, e.g.:
+  export CI_WATCH_GH_TOKEN="github_pat_..."
 
 Configure per-workflow default delays via CW_DEFAULT_DELAYS (";"-separated
 "pattern:duration" pairs — a pattern may contain spaces), e.g.:
