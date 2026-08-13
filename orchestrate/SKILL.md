@@ -7,6 +7,16 @@ description: Coordinate substantial multi-agent work without becoming the primar
 
 Act as the coordinator. Establish the outcome, decompose work, assign bounded units to fresh agents, maintain task ownership, select the right validation for each unit, and report the result. Do not take over a unit merely because it is convenient.
 
+## Required-source blockers
+
+When a required source, integration, permission, or user-owned input is unavailable, stop the affected workflow and ask the user to unblock it.
+
+- Treat a source as required when the requested deliverable depends on it for correctness or completeness. Examples include a referenced Jira or Confluence record, a required MCP connector, credentials, an endpoint inventory, or an external data export.
+- State the exact blocker, the smallest action the user can take, and the work that cannot proceed without it.
+- Do not silently narrow the scope, invent a substitute input, create a placeholder that looks production-ready, or produce a wrap-up artifact that conceals the missing dependency.
+- You may continue only independent work that remains useful and cannot bias, misrepresent, or prematurely complete the blocked deliverable.
+- Resume the blocked workflow only after the user supplies the missing input, restores access, or explicitly approves a narrower scope.
+
 ## Start
 
 1. Identify the deliverable, success criteria, authority boundaries, and likely mode: `build`, `research`, `artifact`, or `mixed`.
@@ -17,7 +27,7 @@ Act as the coordinator. Establish the outcome, decompose work, assign bounded un
    - Research: [references/research.md](references/research.md)
    - Artifact: [references/artifact.md](references/artifact.md)
    - Mixed work: read every applicable reference and sequence the modes around their dependencies.
-5. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. If the user requested the wrap-up presentation, also read [references/presentation-wrapup.md](references/presentation-wrapup.md).
+5. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. Identify whether the active multi-agent surface is v1 or v2 and follow its dispatch contract. If the user requested the wrap-up presentation, also read [references/presentation-wrapup.md](references/presentation-wrapup.md).
 
 ## Mode choice
 

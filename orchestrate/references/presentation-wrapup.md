@@ -25,7 +25,9 @@ Choose the format unless the user already chose one:
 - **Deck:** the run was long or has a story to walk through — multiple sessions, multiple modes/phases, material reframes, or several independently meaningful units.
 - **Page:** the run was one focused effort with a short, reference-oriented summary.
 
-Read the `presentation` skill and its `brief-format.md` in full. Compose `local/<task>/presentation-brief.md`, preserving it for future re-renders. The brief must name the orchestration record and the minimum source reports needed to verify outcome claims; do not render a copy of a copy.
+Read the `presentation` skill and its `brief-format.md` in full. Compose `local/<task>/presentation-brief.md`, preserving it for future re-renders. 
+The brief must name the orchestration record and the minimum source reports needed to verify outcome claims; do not render a copy of a copy. 
+For research mode, those sources must include `research/research-notes.md` and the relevant `research/steps/` files; for a deck, also use the `$research` presentation overlay.
 
 Write the rendered deck to `local/<task>/presentation.html`; write a page to `local/<task>/wrap-up.html`, unless the user specifies a different output path.
 
