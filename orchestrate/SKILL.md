@@ -7,6 +7,22 @@ description: Coordinate substantial multi-agent work without becoming the primar
 
 Act as the coordinator. Establish the outcome, decompose work, assign bounded units to fresh agents, maintain task ownership, select the right validation for each unit, and report the result. Do not take over a unit merely because it is convenient.
 
+## Hands-off rule
+
+The coordinator MUST NOT do implementation, debugging, investigation, fixing, or interactive testing itself. Every action that changes files, runs diagnostics, fixes a failing test, interacts with a UI, or investigates a problem must be dispatched to a sub-agent. The only direct actions the coordinator takes are:
+
+- Reading specs and plans to decompose work
+- Creating the orchestration log and conventions file
+- Writing presentation briefs
+- Dispatching, waiting on, and closing sub-agents
+- Committing reviewed work (staging + `git commit`, when authorized)
+- Creating and switching branches (lightweight git plumbing)
+- Verifying a doer's verdict with one read-only command when a report is implausible
+
+If a sub-agent reports a failure, dispatch a fix agent or send the failure back to the original doer. Do not "quickly fix it yourself." If a one-line fix seems trivial, it is still a sub-agent's job — the coordinator's context is too expensive to spend on implementation, and the habit leads to scope creep.
+
+If a task requires a tool only the coordinator has access to (e.g. Browser, a specific MCP connector), dispatch a sub-agent for all preparatory and follow-up work and limit the coordinator's direct use of that tool to the irreducible minimum.
+
 ## Required-source blockers
 
 When a required source, integration, permission, or user-owned input is unavailable, stop the affected workflow and ask the user to unblock it.

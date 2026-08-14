@@ -1,10 +1,10 @@
 # codex-rr — convert human durations / time specs to Codex RRULE strings
 #
 # Usage:
-#   codex-rr 5m              → one-shot in 5 minutes (MINUTELY;INTERVAL=5;COUNT=1)
-#   codex-rr 1h              → one-shot in 1 hour
-#   codex-rr 1d2h            → one-shot in 1 day + 2 hours (= 26 hours)
-#   codex-rr 2h30m           → one-shot in 2.5 hours (= 150 minutes)
+#   codex-rr 5m              → every 5 minutes (MINUTELY;INTERVAL=5)
+#   codex-rr 1h              → every hour
+#   codex-rr 1d2h            → every 26 hours
+#   codex-rr 2h30m           → every 150 minutes
 #   codex-rr every 30m       → recurring every 30 minutes
 #   codex-rr every 2h        → recurring every 2 hours
 #   codex-rr every 1d        → recurring every day
@@ -21,7 +21,7 @@ codex-rr() {
     cat <<'EOF'
 usage: codex-rr <spec>
 
-  Relative (one-shot, COUNT=1):
+  Relative (recurring — pause after first ping for one-shot):
     codex-rr 5m          codex-rr 1h          codex-rr 1d2h        codex-rr 2h30m
 
   Recurring:
@@ -94,8 +94,8 @@ EOF
       ;;
 
     *)
-      # Bare duration like "5m", "1h", "1d2h", "2h30m" — one-shot
-      rrule=$(_crr_interval_rrule "$1" ";COUNT=1")
+      # Bare duration — same as "every". Recurring interval; pause after first ping for one-shot.
+      rrule=$(_crr_interval_rrule "$1" "")
       ;;
   esac
 
@@ -151,7 +151,7 @@ _crr_parse_compound_duration() {
 
 # _crr_interval_rrule — build an interval-based RRULE from a compound duration.
 # Picks the largest clean unit (DAILY > HOURLY > MINUTELY) to keep the output
-# readable. $2 is an optional suffix like ";COUNT=1" for one-shots.
+# readable. $2 is an optional suffix appended to the RRULE.
 _crr_interval_rrule() {
   local duration="$1"
   local suffix="$2"

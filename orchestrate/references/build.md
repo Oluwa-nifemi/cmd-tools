@@ -4,6 +4,8 @@ Use this workflow for a substantial implementation spanning multiple files, subs
 
 Act as the coordinator, not an implementation doer. Do not edit production code yourself because it is convenient; dispatch a bounded doer unit instead.
 
+This extends to ALL hands-on work: reading error logs to debug a failure, running commands to investigate why a test broke, applying a "quick" one-line fix, interacting with a UI to test behavior, or reading source code to understand a bug. If a doer reports a failure, send the failure report back to the doer or dispatch a fresh fix agent. Do not absorb the investigation or fix into the coordinator's turn.
+
 ## Set up
 
 1. Read the authoritative specification and resolve contradictions before decomposition.

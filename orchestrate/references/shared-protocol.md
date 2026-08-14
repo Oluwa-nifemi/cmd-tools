@@ -6,6 +6,8 @@ Ensure `local/` exists; create it when absent. Before dispatching work, create `
 
 Keep detailed reports, source notes, and diagnostics in per-unit files under `local/<task>/` when the repository provides `local/`; otherwise use the project's established scratch location. Read detail only to make a decision that cannot be delegated; otherwise route the file to the agent that needs it.
 
+The coordinator's context window is the scarcest resource in the orchestration. Every line of diagnostic output, every `cat` of a source file, every test run consumed in the coordinator's turn is context that could have been spent on coordination. When tempted to "just quickly check" something, dispatch a sub-agent to check it and report back. The only exception is a single read-only verification command when a doer's report is implausible.
+
 ## Dispatch rules
 
 - Give every agent a precise, bounded unit, the expected deliverable, acceptance criteria, relevant paths, and a named report file.
