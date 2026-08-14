@@ -1,17 +1,21 @@
 # codex-rr — convert human durations / time specs to Codex RRULE strings
 #
 # Usage:
-#   codex-rr 5m              → every 5 minutes (MINUTELY;INTERVAL=5)
-#   codex-rr 1h              → every hour
-#   codex-rr 1d2h            → every 26 hours
-#   codex-rr 2h30m           → every 150 minutes
-#   codex-rr every 30m       → recurring every 30 minutes
-#   codex-rr every 2h        → recurring every 2 hours
-#   codex-rr every 1d        → recurring every day
+#   codex-rr 5m              → one-shot ~5 min from now (pinned to clock time)
+#   codex-rr 1h              → one-shot ~1 hour from now
+#   codex-rr 1d2h            → one-shot ~26 hours from now
+#   codex-rr 2h30m           → one-shot ~150 min from now
+#   codex-rr every 30m       → recurring, clock-pinned to now+30m
+#   codex-rr every 2h        → recurring, clock-pinned to now+2h
+#   codex-rr every 1d        → recurring daily at current time
 #   codex-rr tomorrow 14:00  → one-shot at 14:00 tomorrow
 #   codex-rr friday 09:30    → one-shot next Friday at 09:30
 #   codex-rr daily 09:00     → recurring daily at 09:00
 #   codex-rr weekly mon 11:00 → recurring weekly on Monday at 11:00
+#
+# Codex requires BYHOUR/BYMINUTE/BYSECOND in every RRULE. Bare interval
+# RRULEs (FREQ=MINUTELY;INTERVAL=5) are rejected as "no future runs".
+# All paths emit clock-pinned RRULEs that Codex can schedule.
 #
 # Output goes to stdout and is copied to the clipboard (pbcopy on macOS).
 # Designed for piping into Codex automation prompts.
@@ -21,10 +25,10 @@ codex-rr() {
     cat <<'EOF'
 usage: codex-rr <spec>
 
-  Relative (recurring — pause after first ping for one-shot):
+  Relative (one-shot pinned to computed clock time):
     codex-rr 5m          codex-rr 1h          codex-rr 1d2h        codex-rr 2h30m
 
-  Recurring:
+  Recurring (clock-pinned interval):
     codex-rr every 30m   codex-rr every 2h    codex-rr every 1d
 
   Absolute (one-shot at a clock time):
@@ -40,13 +44,13 @@ EOF
 
   case "$1" in
     every)
-      # "codex-rr every 30m" — recurring at a fixed interval
+      # "codex-rr every 30m" — recurring, clock-pinned to now + duration
       shift
       if [[ $# -eq 0 ]]; then
         echo "codex-rr: 'every' needs a duration (e.g. every 30m)" >&2
         return 1
       fi
-      rrule=$(_crr_interval_rrule "$1" "")
+      rrule=$(_crr_clockpinned_rrule "$1" "recurring")
       ;;
 
     daily)
@@ -76,7 +80,7 @@ EOF
 
     tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\
     mon|tue|wed|thu|fri|sat|sun)
-      # "codex-rr tomorrow 14:00" / "codex-rr friday 09:30" — one-shot at a named day + time
+      # "codex-rr tomorrow 14:00" / "codex-rr friday 09:30" — one-shot
       local target_day="$1"
       shift
       local time="${1:-09:00}"
@@ -84,7 +88,6 @@ EOF
       local minute="${time##*:}"
 
       if [[ "$target_day" == "tomorrow" ]]; then
-        # Tomorrow = daily with count 1; the RRULE fires on the next occurrence
         rrule="RRULE:FREQ=DAILY;COUNT=1;BYHOUR=${hour#0};BYMINUTE=${minute#0};BYSECOND=0"
       else
         local day_abbrev
@@ -94,8 +97,9 @@ EOF
       ;;
 
     *)
-      # Bare duration — same as "every". Recurring interval; pause after first ping for one-shot.
-      rrule=$(_crr_interval_rrule "$1" "")
+      # Bare duration like "5m", "1h", "1d2h" — compute target clock time,
+      # emit a one-shot RRULE pinned to that time with COUNT=1.
+      rrule=$(_crr_clockpinned_rrule "$1" "oneshot")
       ;;
   esac
 
@@ -149,12 +153,19 @@ _crr_parse_compound_duration() {
   echo "$total_minutes"
 }
 
-# _crr_interval_rrule — build an interval-based RRULE from a compound duration.
-# Picks the largest clean unit (DAILY > HOURLY > MINUTELY) to keep the output
-# readable. $2 is an optional suffix appended to the RRULE.
-_crr_interval_rrule() {
+# _crr_clockpinned_rrule — compute target time (now + duration) and emit an
+# RRULE pinned to that clock time. Codex requires BYHOUR/BYMINUTE/BYSECOND
+# for the scheduler to find a future occurrence.
+#
+# $1: compound duration string (e.g. "5m", "1d2h")
+# $2: "oneshot" adds COUNT=1; "recurring" omits it
+#
+# Same-day targets:     FREQ=DAILY  (next occurrence of H:M is later today)
+# Different-day targets: FREQ=WEEKLY;BYDAY=XX (≤7 days out)
+# Durations >7 days are rejected — BYDAY can't pin beyond the current week.
+_crr_clockpinned_rrule() {
   local duration="$1"
-  local suffix="$2"
+  local mode="$2"
   local total_minutes
   total_minutes=$(_crr_parse_compound_duration "$duration") || return 1
 
@@ -163,14 +174,31 @@ _crr_interval_rrule() {
     return 1
   fi
 
-  if (( total_minutes % 1440 == 0 )); then
-    local days=$(( total_minutes / 1440 ))
-    echo "RRULE:FREQ=DAILY;INTERVAL=${days}${suffix}"
-  elif (( total_minutes % 60 == 0 )); then
-    local hours=$(( total_minutes / 60 ))
-    echo "RRULE:FREQ=HOURLY;INTERVAL=${hours}${suffix}"
+  if (( total_minutes > 10080 )); then
+    echo "codex-rr: durations >7 days can't be pinned to a day-of-week" >&2
+    return 1
+  fi
+
+  local now_epoch=$(date +%s)
+  local target_epoch=$(( now_epoch + total_minutes * 60 ))
+  # macOS date: -r <epoch> formats that epoch as a date
+  local target_hour=$(date -r "$target_epoch" +%H)
+  local target_minute=$(date -r "$target_epoch" +%M)
+  local today=$(date +%Y%m%d)
+  local target_date=$(date -r "$target_epoch" +%Y%m%d)
+
+  local count_suffix=""
+  [[ "$mode" == "oneshot" ]] && count_suffix=";COUNT=1"
+
+  if [[ "$today" == "$target_date" ]]; then
+    # Target is later today — DAILY fires at the next matching H:M
+    echo "RRULE:FREQ=DAILY${count_suffix};BYHOUR=${target_hour#0};BYMINUTE=${target_minute#0};BYSECOND=0"
   else
-    echo "RRULE:FREQ=MINUTELY;INTERVAL=${total_minutes}${suffix}"
+    # Target is a different day — pin to day-of-week
+    local target_dow=$(date -r "$target_epoch" +%a)
+    local day_rr
+    day_rr=$(_crr_day_abbrev "$target_dow") || return 1
+    echo "RRULE:FREQ=WEEKLY${count_suffix};BYDAY=${day_rr};BYHOUR=${target_hour#0};BYMINUTE=${target_minute#0};BYSECOND=0"
   fi
 }
 
