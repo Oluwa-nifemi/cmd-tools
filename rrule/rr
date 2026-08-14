@@ -1,0 +1,192 @@
+# rr — convert human durations / time specs to Codex RRULE strings
+#
+# Usage:
+#   rr 5m              → one-shot in 5 minutes (MINUTELY;INTERVAL=5;COUNT=1)
+#   rr 1h              → one-shot in 1 hour
+#   rr 1d2h            → one-shot in 1 day + 2 hours (= 26 hours)
+#   rr 2h30m           → one-shot in 2.5 hours (= 150 minutes)
+#   rr every 30m       → recurring every 30 minutes
+#   rr every 2h        → recurring every 2 hours
+#   rr every 1d        → recurring every day
+#   rr tomorrow 14:00  → one-shot at 14:00 tomorrow
+#   rr friday 09:30    → one-shot next Friday at 09:30
+#   rr daily 09:00     → recurring daily at 09:00
+#   rr weekly mon 11:00 → recurring weekly on Monday at 11:00
+#
+# Output goes to stdout and is copied to the clipboard (pbcopy on macOS).
+# Designed for piping into Codex automation prompts.
+
+rr() {
+  if [[ $# -eq 0 ]]; then
+    cat <<'EOF'
+usage: rr <spec>
+
+  Relative (one-shot, COUNT=1):
+    rr 5m          rr 1h          rr 1d2h        rr 2h30m
+
+  Recurring:
+    rr every 30m   rr every 2h    rr every 1d
+
+  Absolute (one-shot at a clock time):
+    rr tomorrow 14:00    rr friday 09:30
+
+  Recurring at a clock time:
+    rr daily 09:00       rr weekly mon 11:00
+EOF
+    return 1
+  fi
+
+  local rrule=""
+
+  case "$1" in
+    every)
+      # "rr every 30m" — recurring at a fixed interval
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "rr: 'every' needs a duration (e.g. every 30m)" >&2
+        return 1
+      fi
+      rrule=$(_rr_interval_rrule "$1" "")
+      ;;
+
+    daily)
+      # "rr daily 09:00" — recurring daily at HH:MM
+      shift
+      local time="${1:-09:00}"
+      local hour="${time%%:*}"
+      local minute="${time##*:}"
+      rrule="RRULE:FREQ=DAILY;BYHOUR=${hour#0};BYMINUTE=${minute#0};BYSECOND=0"
+      ;;
+
+    weekly)
+      # "rr weekly mon 11:00" — recurring weekly on a named day at HH:MM
+      shift
+      if [[ $# -lt 2 ]]; then
+        echo "rr: weekly needs a day and time (e.g. weekly mon 11:00)" >&2
+        return 1
+      fi
+      local day_abbrev
+      day_abbrev=$(_rr_day_abbrev "$1") || return 1
+      shift
+      local time="${1:-09:00}"
+      local hour="${time%%:*}"
+      local minute="${time##*:}"
+      rrule="RRULE:FREQ=WEEKLY;BYDAY=${day_abbrev};BYHOUR=${hour#0};BYMINUTE=${minute#0};BYSECOND=0"
+      ;;
+
+    tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\
+    mon|tue|wed|thu|fri|sat|sun)
+      # "rr tomorrow 14:00" / "rr friday 09:30" — one-shot at a named day + time
+      local target_day="$1"
+      shift
+      local time="${1:-09:00}"
+      local hour="${time%%:*}"
+      local minute="${time##*:}"
+
+      if [[ "$target_day" == "tomorrow" ]]; then
+        # Tomorrow = daily with count 1; the RRULE fires on the next occurrence
+        rrule="RRULE:FREQ=DAILY;COUNT=1;BYHOUR=${hour#0};BYMINUTE=${minute#0};BYSECOND=0"
+      else
+        local day_abbrev
+        day_abbrev=$(_rr_day_abbrev "$target_day") || return 1
+        rrule="RRULE:FREQ=WEEKLY;COUNT=1;BYDAY=${day_abbrev};BYHOUR=${hour#0};BYMINUTE=${minute#0};BYSECOND=0"
+      fi
+      ;;
+
+    *)
+      # Bare duration like "5m", "1h", "1d2h", "2h30m" — one-shot
+      rrule=$(_rr_interval_rrule "$1" ";COUNT=1")
+      ;;
+  esac
+
+  if [[ -z "$rrule" ]]; then
+    echo "rr: failed to generate RRULE" >&2
+    return 1
+  fi
+
+  echo "$rrule"
+
+  # Copy to clipboard when pbcopy is available (macOS)
+  if command -v pbcopy &>/dev/null; then
+    printf '%s' "$rrule" | pbcopy
+    echo "(copied to clipboard)" >&2
+  fi
+}
+
+# _rr_parse_compound_duration — parse compound durations like "1d2h30m" into
+# total minutes. Supports d (days), h (hours), m (minutes). Falls back to bare
+# numbers as minutes (matching ntf convention).
+#
+# zsh uses $MATCH / $match for regex captures (not $BASH_REMATCH), so every
+# =~ block here references match[1] for the first capture group and $MATCH
+# for the full matched string.
+_rr_parse_compound_duration() {
+  local input="$1"
+  local total_minutes=0
+  local remaining="$input"
+
+  # Peel off each unit greedily: digits followed by d/h/m
+  while [[ -n "$remaining" ]]; do
+    if [[ "$remaining" =~ ^([0-9]+)d ]]; then
+      total_minutes=$(( total_minutes + match[1] * 1440 ))
+      remaining="${remaining#$MATCH}"
+    elif [[ "$remaining" =~ ^([0-9]+)h ]]; then
+      total_minutes=$(( total_minutes + match[1] * 60 ))
+      remaining="${remaining#$MATCH}"
+    elif [[ "$remaining" =~ ^([0-9]+)m ]]; then
+      total_minutes=$(( total_minutes + match[1] ))
+      remaining="${remaining#$MATCH}"
+    elif [[ "$remaining" =~ ^([0-9]+)$ ]]; then
+      # Bare number at the end — treat as minutes (same as ntf)
+      total_minutes=$(( total_minutes + match[1] ))
+      remaining=""
+    else
+      echo "rr: can't parse duration '$input' (stuck at '$remaining')" >&2
+      return 1
+    fi
+  done
+
+  echo "$total_minutes"
+}
+
+# _rr_interval_rrule — build an interval-based RRULE from a compound duration.
+# Picks the largest clean unit (DAILY > HOURLY > MINUTELY) to keep the output
+# readable. $2 is an optional suffix like ";COUNT=1" for one-shots.
+_rr_interval_rrule() {
+  local duration="$1"
+  local suffix="$2"
+  local total_minutes
+  total_minutes=$(_rr_parse_compound_duration "$duration") || return 1
+
+  if [[ "$total_minutes" -le 0 ]]; then
+    echo "rr: duration must be positive" >&2
+    return 1
+  fi
+
+  if (( total_minutes % 1440 == 0 )); then
+    local days=$(( total_minutes / 1440 ))
+    echo "RRULE:FREQ=DAILY;INTERVAL=${days}${suffix}"
+  elif (( total_minutes % 60 == 0 )); then
+    local hours=$(( total_minutes / 60 ))
+    echo "RRULE:FREQ=HOURLY;INTERVAL=${hours}${suffix}"
+  else
+    echo "RRULE:FREQ=MINUTELY;INTERVAL=${total_minutes}${suffix}"
+  fi
+}
+
+# _rr_day_abbrev — map day names to RFC 5545 two-letter abbreviations
+_rr_day_abbrev() {
+  case "${1:l}" in
+    mon|monday)    echo "MO" ;;
+    tue|tuesday)   echo "TU" ;;
+    wed|wednesday) echo "WE" ;;
+    thu|thursday)  echo "TH" ;;
+    fri|friday)    echo "FR" ;;
+    sat|saturday)  echo "SA" ;;
+    sun|sunday)    echo "SU" ;;
+    *)
+      echo "rr: unknown day '$1'" >&2
+      return 1
+      ;;
+  esac
+}
