@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+
+if [ "$#" -ne 0 ]; then
+    echo "Usage: startrepl" >&2
+    exit 2
+fi
+
+root="$(require_project_root)"
+port="$(start_repl "$root")"
+echo "nREPL ready for $root on port $port."

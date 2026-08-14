@@ -1,0 +1,246 @@
+#!/bin/sh
+set -eu
+
+registry="${HOME}/.cache/zed-clojure-repl/registry.json"
+
+python3 - "$registry" <<'PY'
+import json
+import os
+import concurrent.futures
+import subprocess
+import sys
+import time
+
+path = sys.argv[1]
+try:
+    with open(path) as handle:
+        registry = json.load(handle)
+except FileNotFoundError:
+    registry = {"worktrees": {}}
+
+entries = registry.get("worktrees", {})
+def port_answers(port):
+    # A live process with a dead port is a phantom: it keeps its registry slot
+    # and can never be reached. Check both, cheaply.
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), 0.25):
+            return True
+    except ConnectionRefusedError:
+        return False
+    except OSError:
+        return True
+
+
+live = {}
+for worktree, entry in entries.items():
+    try:
+        os.kill(int(entry["pid"]), 0)
+        if not port_answers(entry.get("port", 0)):
+            continue
+    except (KeyError, OSError):
+        continue
+    live[worktree] = entry
+
+if live != entries:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as handle:
+        json.dump({"worktrees": live}, handle, indent=2)
+        handle.write("\n")
+
+if not live:
+    print("No REPLs running.")
+    print("Run startrepl in a Clojure project to start one.")
+    raise SystemExit
+
+
+def ago(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h{minutes:02d}m ago" if minutes else f"{hours}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def lasting(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h{minutes:02d}m" if minutes else f"{hours}h"
+    return f"{seconds // 86400}d"
+
+
+home = os.path.expanduser("~")
+now = time.time()
+ordered = sorted(live.items(), key=lambda item: -item[1]["last_used_at"])
+dim = "\033[2m" if sys.stdout.isatty() else ""
+bold = "\033[1m" if sys.stdout.isatty() else ""
+off = "\033[0m" if sys.stdout.isatty() else ""
+
+# The LRU cap lives in nrepl_registry.rs; keep this in sync if it changes.
+MAX_REPLS = 4
+
+count = len(ordered)
+
+names = {}
+for worktree, _ in ordered:
+    parts = [part for part in worktree.rstrip("/").split("/") if part]
+    base = parts[-1] if parts else worktree
+    names.setdefault(base, []).append(worktree)
+
+
+def label(worktree):
+    parts = [part for part in worktree.rstrip("/").split("/") if part]
+    base = parts[-1] if parts else worktree
+    if len(names.get(base, [])) == 1:
+        return base
+    parent = parts[-2] if len(parts) > 1 else ""
+    return f"{base} ({parent})" if parent else base
+
+
+header = ("PROJECT", "LAST USED", "UPTIME", "PORT", "APP", "LOCATION")
+
+# A REPL's JVM is a child of the recorded wrapper pid, so match app ports by
+# process group. This answers "which worktree is holding 3000?" directly.
+# Whether each REPL has a started dev system. A bare REPL costs nothing; a
+# started system holds a Postgres pool of roughly 20-40 connections, so this is
+# what actually predicts "remaining connection slots are reserved" on the next
+# `(go)`. Probed concurrently with a short timeout: `repls` must stay instant,
+# and an unreachable REPL simply reports unknown.
+def system_started(port):
+    code = (
+        "(if-let [v (resolve (quote ardoq.system/system))]"
+        " (if (deref v) :started :stopped) :unknown)"
+    )
+    try:
+        result = subprocess.run(
+            ["clj-nrepl-eval", "-p", str(port), code],
+            capture_output=True,
+            text=True,
+            timeout=6,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "?"
+    if ":started" in result:
+        return "yes"
+    if ":stopped" in result or ":unknown" in result:
+        return "no"
+    return "?"
+
+
+started = {}
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+    futures = {
+        pool.submit(system_started, entry["port"]): worktree
+        for worktree, entry in live.items()
+    }
+    for future in concurrent.futures.as_completed(futures, timeout=10):
+        try:
+            started[futures[future]] = future.result()
+        except Exception:
+            started[futures[future]] = "?"
+
+app_ports = [3000]
+port_owner = {}
+for app_port in app_ports:
+    try:
+        listing = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{app_port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.splitlines()[1:]
+    except (OSError, subprocess.SubprocessError):
+        continue
+    for row in listing:
+        parts = row.split()
+        if len(parts) < 2:
+            continue
+        try:
+            owner_pid = int(parts[1])
+        except ValueError:
+            continue
+        try:
+            group = subprocess.run(
+                ["ps", "-o", "pgid=", "-p", str(owner_pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for worktree, entry in live.items():
+            try:
+                repl_group = subprocess.run(
+                    ["ps", "-o", "pgid=", "-p", str(entry["pid"])],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if group and group == repl_group:
+                port_owner.setdefault(worktree, []).append(app_port)
+
+rows = []
+for index, (worktree, entry) in enumerate(ordered):
+    note = ""
+    if worktree in port_owner:
+        held = ", ".join(str(p) for p in port_owner[worktree])
+        note = f"running your app on {held}"
+    elif index == count - 1 and count >= MAX_REPLS:
+        note = "next to be dropped"
+    rows.append(
+        (
+            "*" if index == 0 else " ",
+            label(worktree),
+            ago(now - entry["last_used_at"]),
+            lasting(now - entry["started_at"]),
+            str(entry["port"]),
+            started.get(worktree, "?"),
+            os.path.dirname(worktree.rstrip("/")).replace(home, "~", 1),
+            note,
+        )
+    )
+
+name_width = max([len(header[0])] + [len(row[1]) for row in rows])
+used_width = max([len(header[1])] + [len(row[2]) for row in rows])
+up_width = max([len(header[2])] + [len(row[3]) for row in rows])
+port_width = max([len(header[3])] + [len(row[4]) for row in rows])
+app_width = max([len(header[4])] + [len(row[5]) for row in rows])
+
+print(
+    f"{dim}  {header[0]:<{name_width}}"
+    f"  {header[1]:>{used_width}}"
+    f"  {header[2]:<{up_width}}"
+    f"  {header[3]:<{port_width}}"
+    f"  {header[4]:<{app_width}}"
+    f"  {header[5]}{off}"
+)
+
+for marker, name, used, up, port, app, parent, note in rows:
+    line = (
+        f"{marker} {bold}{name:<{name_width}}{off}"
+        f"  {used:>{used_width}}"
+        f"  {up:<{up_width}}"
+        f"  {port:<{port_width}}"
+        f"  {app:<{app_width}}"
+        f"  {dim}{parent}{off}"
+    )
+    if note:
+        line += f"  {dim}({note}){off}"
+    print(line)
+
+print()
+print(f"{dim}`watchrepl` in a project tails its log.{off}")
+PY

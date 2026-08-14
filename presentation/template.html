@@ -360,7 +360,26 @@
         var isOpen = panel.classList.contains('open');
         panel.classList.toggle('open', !isOpen);
         toggle.classList.toggle('open', !isOpen);
-        if (!isOpen) { requestAnimationFrame(function () { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }); }
+        if (!isOpen) {
+          // Wait for the max-height transition to finish before measuring/scrolling —
+          // scrolling on the next animation frame (old behavior) measures the panel
+          // mid-transition (near-zero height), so it scrolls to the wrong spot and
+          // the newly revealed content ends up clipped/off-screen.
+          var settled = false;
+          function scrollWhenSettled() {
+            if (settled) return;
+            settled = true;
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+          panel.addEventListener('transitionend', function onEnd(e) {
+            if (e.propertyName !== 'max-height') return;
+            panel.removeEventListener('transitionend', onEnd);
+            scrollWhenSettled();
+          });
+          // Fallback in case transitionend doesn't fire (e.g. reduced-motion, or
+          // the browser coalesces the transition away).
+          setTimeout(scrollWhenSettled, 350);
+        }
       });
     });
 

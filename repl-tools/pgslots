@@ -1,0 +1,67 @@
+#!/bin/sh
+# Show local Postgres connection usage, and optionally reclaim idle slots.
+#
+# Each started dev system opens a pool of roughly 20-40 connections against a
+# 100-slot local Postgres. Stopping a system does NOT return them promptly: the
+# JVM keeps the sockets, and Postgres keeps each backend until it notices the
+# peer is gone. Killing a REPL has the same lag. So the database can sit at its
+# limit while nothing is actually using it, and every `(go)` fails with
+# "remaining connection slots are reserved for roles with the SUPERUSER
+# attribute" — which reads like a broken REPL rather than an exhausted pool.
+set -eu
+
+container="${PGSLOTS_CONTAINER:-ardoq_postgres_1}"
+idle_minutes="${PGSLOTS_IDLE_MINUTES:-1}"
+
+usage() {
+    echo "Usage: pgslots [--reclaim] [--all]" >&2
+    echo >&2
+    echo "  (no args)   Show connection usage grouped by client." >&2
+    echo "  --reclaim   Terminate ardoq_api* backends idle for more than" >&2
+    echo "              ${idle_minutes}m. Safe: a live system reopens its pool on demand." >&2
+    echo "  --all       With --reclaim, ignore the idle age filter." >&2
+    exit 2
+}
+
+reclaim=false
+ignore_age=false
+for arg in "$@"; do
+    case "$arg" in
+        --reclaim) reclaim=true ;;
+        --all) ignore_age=true ;;
+        *) usage ;;
+    esac
+done
+
+psql_run() {
+    docker exec "$container" psql -U "${PGSLOTS_USER:-ardoq_superuser}" \
+        -d "${PGSLOTS_DB:-ardoq}" "$@" 2>&1
+}
+
+if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+    echo "Postgres container '$container' is not running." >&2
+    echo "Set PGSLOTS_CONTAINER if it has a different name." >&2
+    exit 1
+fi
+
+total="$(psql_run -tAc "select count(*)||' of '||current_setting('max_connections') from pg_stat_activity")"
+echo "connections: $total"
+echo
+psql_run -c "select coalesce(nullif(application_name,''),'(unnamed)') as client, usename as db_user, count(*), count(*) filter (where state='idle') as idle from pg_stat_activity group by 1,2 order by 3 desc limit 10"
+
+if [ "$reclaim" != true ]; then
+    echo "Run 'pgslots --reclaim' to free idle slots."
+    exit 0
+fi
+
+if [ "$ignore_age" = true ]; then
+    age_filter="true"
+else
+    age_filter="now()-state_change > interval '${idle_minutes} minutes'"
+fi
+
+echo
+freed="$(psql_run -tAc "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename like 'ardoq_api%' and state='idle' and $age_filter")"
+echo "terminated $freed idle backend(s)"
+after="$(psql_run -tAc "select count(*)||' of '||current_setting('max_connections') from pg_stat_activity")"
+echo "connections: $after"

@@ -1,0 +1,73 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+
+usage() {
+    echo "Usage: runrepl [--no-start] [--port-owner APP_PORT] CODE" >&2
+    echo >&2
+    echo "  --port-owner APP_PORT  Target the worktree whose REPL holds APP_PORT" >&2
+    echo "                         instead of the current project. Use this to stop" >&2
+    echo "                         whichever worktree is running the app, e.g." >&2
+    echo "                         runrepl --port-owner 3000 '(user/stop)'" >&2
+}
+
+no_start=false
+port_owner=""
+while true; do
+    case "${1:-}" in
+        --no-start)
+            no_start=true
+            shift
+            ;;
+        --port-owner)
+            if [ -z "${2:-}" ]; then
+                usage
+                exit 2
+            fi
+            port_owner="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ "$#" -ne 1 ]; then
+    usage
+    exit 2
+fi
+
+code="$1"
+
+if [ -n "$port_owner" ]; then
+    # Targeting by app port: never start a REPL, because the point is to reach
+    # an app that is already running somewhere.
+    root="$(registry_worktree_for_app_port "$port_owner")"
+    if [ -z "$root" ]; then
+        echo "No registered REPL is holding port $port_owner." >&2
+        echo "Run 'repls' to see what is live." >&2
+        exit 1
+    fi
+    port="$(registry_port "$root")"
+    if [ -z "$port" ]; then
+        echo "Found $root holding port $port_owner, but it has no registered nREPL port." >&2
+        exit 1
+    fi
+    echo "Targeting $root (holds port $port_owner, nREPL on $port)." >&2
+else
+    root="$(require_project_root)"
+    port="$(registry_port "$root")"
+    if [ -z "$port" ]; then
+        if [ "$no_start" = true ]; then
+            echo "No live nREPL is registered for $root (--no-start)." >&2
+            exit 1
+        fi
+        port="$(start_repl "$root")"
+    fi
+fi
+
+clj-nrepl-eval -p "$port" "$code"
+touch_registry_entry "$root"

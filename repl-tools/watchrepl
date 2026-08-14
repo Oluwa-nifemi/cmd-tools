@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+
+root="$(require_project_root)"
+log_path="$(python3 - "$REPL_REGISTRY" "$root" <<'PY'
+import json
+import os
+import sys
+
+path, root = sys.argv[1:]
+try:
+    with open(path) as handle:
+        entries = json.load(handle).get("worktrees", {})
+except FileNotFoundError:
+    entries = {}
+
+entry = entries.get(root)
+if entry:
+    try:
+        os.kill(int(entry["pid"]), 0)
+        print(entry["log_path"])
+    except (KeyError, OSError, TypeError, ValueError):
+        pass
+PY
+)"
+
+if [ -z "$log_path" ]; then
+    echo "No live nREPL is registered for $root." >&2
+    repls
+    exit 1
+fi
+
+echo "Tailing $log_path (Ctrl-C to stop)." >&2
+tail -n 80 -f "$log_path"
