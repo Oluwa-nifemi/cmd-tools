@@ -1,48 +1,44 @@
 ---
 name: presentation
-description: Coordinate a self-contained HTML deck or one-page presentation. The main agent creates a brief and delegates all template reading and rendering to a dedicated renderer subagent. Use when the user asks to make, render, or present a deck, slides, one-pager, scoped page, or tech talk.
+description: Build a self-contained HTML deck or one-page presentation. Use when the user asks to make, render, or present a deck, slides, one-pager, scoped page, or tech talk.
 ---
 
-# Presentation coordinator
+# Presentation skill
 
-This skill is a coordinator. Do not read HTML templates or renderer rules in
-the main task.
+## Workflow
 
-## Main-agent workflow
+1. **Brief** — Read [brief-format.md](brief-format.md). Create or receive a
+   complete brief. Save it in the task output directory.
+2. **Render** — either do it yourself, or dispatch exactly one sub-agent.
+   If you dispatch a sub-agent, you MUST include this line in its prompt:
 
-1. Establish the audience, purpose, format, and size. Ask only if the format
-   cannot be determined. Default size to lean.
-2. Read [brief-format.md](brief-format.md). Create a complete brief and save
-   it in the task output directory.
-3. Dispatch one renderer subagent. Give it:
-   - the brief path;
-   - the source files named in the brief;
-   - [renderer-guide.md](references/renderer-guide.md);
-   - the requested output path.
-4. Tell the renderer to run these commands exactly:
+   > You are the renderer. Read the renderer guide and render the deck
+   > yourself. Do NOT create or dispatch any sub-agents.
+
+   The renderer reads [renderer-guide.md](references/renderer-guide.md) and
+   runs these commands:
 
    ```bash
    python3 scripts/presentation_artifact.py init \
      --format <deck|page> \
      --output <path>
-   # Render the artifact.
+   # Edit the initialized artifact per the brief and renderer guide.
    python3 scripts/presentation_artifact.py verify \
      --format <deck|page> \
      --output <path>
    ```
 
-   The renderer must not read the script or either template. The initializer
-   selects the template and backs up an existing output automatically.
-5. Report the completed artifact and the renderer's verification result.
-
-For a direct user request, always delegate the rendering. Do not use an
-inline rendering shortcut.
+   Do not read the script or either template file. The initializer selects
+   the template and backs up an existing output automatically.
+3. **Report** the completed artifact and the verification result.
 
 ## Calling-skill contract
 
 A calling skill may use this skill after it has assembled the source material.
 It must create the brief using [brief-format.md](brief-format.md), then
-dispatch the renderer as described above. It must not read:
+render or dispatch exactly one sub-agent to render. When dispatching, the
+caller MUST tell the sub-agent not to delegate further — include the line
+from step 2 above in the dispatch prompt. The sub-agent must not read:
 
 - `template.html`
 - `page-template.html`
@@ -51,8 +47,8 @@ dispatch the renderer as described above. It must not read:
 
 ## Resource loading
 
-- Main agent and caller: `brief-format.md` only.
-- Renderer subagent: `references/renderer-guide.md`,
+- Brief author: `brief-format.md` only.
+- Renderer (whether root agent or sub-agent): `references/renderer-guide.md`,
   `references/content-quality.md`, one selected format reference, and
   `references/verification.md`.
 - `scripts/presentation_artifact.py` selects and copies the template. The

@@ -4,7 +4,12 @@ This is the contract between a calling skill and the `presentation` skill. The c
 
 ## Hard requirement for the dispatched sub-agent
 
-**The sub-agent dispatched to render MUST read `~/.claude/skills/presentation/SKILL.md` in full before writing a single line of HTML.** That file contains the mandatory invariants, the default aesthetic, the progressive-disclosure pattern, code modal architecture, navigation rules, and the verification grep. Skipping it leads to broken decks (this has happened — the invariants exist because of past failures). The brief that the caller composes should include this instruction verbatim near the top.
+**The agent that renders MUST read the presentation SKILL.md in full before
+writing a single line of HTML.** That file contains the mandatory invariants,
+the default aesthetic, the progressive-disclosure pattern, code modal
+architecture, navigation rules, and the verification grep. Skipping it leads
+to broken decks (this has happened — the invariants exist because of past
+failures).
 
 ## Schema
 
