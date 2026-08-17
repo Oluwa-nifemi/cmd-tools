@@ -289,6 +289,66 @@ with open(path, "w") as handle:
 PY
 }
 
+# Resolve a 1-based index from the `repls` listing to an absolute worktree
+# path. The ordering mirrors `repls`: live entries sorted by last_used_at
+# descending, so index 1 is always the most-recently-used REPL.
+resolve_worktree_by_index() {
+    python3 - "$REPL_REGISTRY" "$1" <<'PY'
+import json
+import os
+import socket
+import sys
+
+path, index_str = sys.argv[1:]
+try:
+    index = int(index_str)
+except ValueError:
+    print(f"killrepl: '{index_str}' is not a number", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    with open(path) as handle:
+        registry = json.load(handle)
+except FileNotFoundError:
+    print("No REPLs running.", file=sys.stderr)
+    raise SystemExit(1)
+except (OSError, json.JSONDecodeError) as error:
+    print(f"Cannot read registry: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+def port_answers(port):
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), 0.25):
+            return True
+    except ConnectionRefusedError:
+        return False
+    except OSError:
+        return True
+
+entries = registry.get("worktrees", {})
+live = {}
+for worktree, entry in entries.items():
+    try:
+        os.kill(int(entry["pid"]), 0)
+        if not port_answers(entry.get("port", 0)):
+            continue
+    except (KeyError, OSError, TypeError, ValueError):
+        continue
+    live[worktree] = entry
+
+if not live:
+    print("No REPLs running.", file=sys.stderr)
+    raise SystemExit(1)
+
+ordered = sorted(live.items(), key=lambda item: -item[1]["last_used_at"])
+if index < 1 or index > len(ordered):
+    print(f"No REPL at index {index}. {len(ordered)} running.", file=sys.stderr)
+    raise SystemExit(1)
+
+print(ordered[index - 1][0])
+PY
+}
+
 start_repl() {
     root="$1"
     existing_port="$(registry_port "$root")"

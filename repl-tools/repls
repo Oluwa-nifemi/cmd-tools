@@ -220,7 +220,7 @@ port_width = max([len(header[3])] + [len(row[4]) for row in rows])
 app_width = max([len(header[4])] + [len(row[5]) for row in rows])
 
 print(
-    f"{dim}  {header[0]:<{name_width}}"
+    f"{dim}     {header[0]:<{name_width}}"
     f"  {header[1]:>{used_width}}"
     f"  {header[2]:<{up_width}}"
     f"  {header[3]:<{port_width}}"
@@ -228,9 +228,9 @@ print(
     f"  {header[5]}{off}"
 )
 
-for marker, name, used, up, port, app, parent, note in rows:
+for idx, (marker, name, used, up, port, app, parent, note) in enumerate(rows, start=1):
     line = (
-        f"{marker} {bold}{name:<{name_width}}{off}"
+        f"{dim}{idx:>2}{off} {marker} {bold}{name:<{name_width}}{off}"
         f"  {used:>{used_width}}"
         f"  {up:<{up_width}}"
         f"  {port:<{port_width}}"
@@ -242,5 +242,5 @@ for marker, name, used, up, port, app, parent, note in rows:
     print(line)
 
 print()
-print(f"{dim}`watchrepl` in a project tails its log.{off}")
+print(f"{dim}`seerepl N` tails a log, `killrepl N` stops a REPL.{off}")
 PY

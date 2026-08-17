@@ -18,6 +18,9 @@ runrepl '(+ 1 2)'
 runrepl --no-start '(+ 1 2)'
 startrepl
 watchrepl
+killrepl          # kill REPL for the current project
+killrepl 2        # kill REPL #2 from `repls` listing
+seerepl 1         # tail log for REPL #1 without cd-ing into its project
 ```
 
 Before running Clojure tests, reload both the changed source namespace and its

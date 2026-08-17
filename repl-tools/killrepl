@@ -1,0 +1,83 @@
+#!/bin/sh
+# Kill a running REPL by index (from `repls`) or for the current project.
+#
+# Sends SIGTERM to the process group so the JVM and its children all go down,
+# then removes the registry entry. Safe to run multiple times — a dead REPL
+# just gets cleaned out of the registry.
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+
+usage() {
+    echo "Usage: killrepl [INDEX]" >&2
+    echo >&2
+    echo "  INDEX  Kill the REPL at this index from 'repls'." >&2
+    echo "         Without an index, kills the REPL for the current project." >&2
+    exit 2
+}
+
+case "${1:-}" in
+    -h|--help) usage ;;
+esac
+
+if [ "$#" -gt 1 ]; then
+    usage
+fi
+
+if [ "$#" -eq 1 ] && printf '%s\n' "$1" | grep -qE '^[0-9]+$'; then
+    # Index from `repls` listing — resolve without needing to cd into the project
+    root="$(resolve_worktree_by_index "$1")"
+elif [ "$#" -eq 0 ]; then
+    # No argument: kill the REPL for the current project, like startrepl/watchrepl
+    root="$(require_project_root)"
+else
+    usage
+fi
+
+# Kill the process group and remove the registry entry. Using killpg via
+# Python because the REPL runs in its own session (setsid in start_repl),
+# and we want the JVM and its children to all receive the signal.
+python3 - "$REPL_REGISTRY" "$root" <<'PY'
+import json
+import os
+import signal
+import sys
+
+path, root = sys.argv[1:]
+try:
+    with open(path) as handle:
+        registry = json.load(handle)
+except FileNotFoundError:
+    print(f"killrepl: no registry file — nothing to kill.", file=sys.stderr)
+    raise SystemExit(1)
+except (OSError, json.JSONDecodeError) as error:
+    print(f"killrepl: cannot read registry: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+entries = registry.get("worktrees", {})
+entry = entries.get(root)
+if not entry:
+    name = root.rstrip("/").rsplit("/", 1)[-1]
+    print(f"killrepl: no registry entry for {name}", file=sys.stderr)
+    raise SystemExit(1)
+
+pid = int(entry["pid"])
+port = entry.get("port", "?")
+name = root.rstrip("/").rsplit("/", 1)[-1]
+
+try:
+    os.killpg(os.getpgid(pid), signal.SIGTERM)
+    print(f"Killed REPL for {name} (pid {pid}, port {port}).")
+except ProcessLookupError:
+    print(f"REPL for {name} (pid {pid}) was already dead — cleaning registry.")
+except PermissionError:
+    print(f"killrepl: no permission to kill pid {pid}", file=sys.stderr)
+    raise SystemExit(1)
+
+# Remove from registry so `repls` doesn't show a stale entry
+del entries[root]
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+PY

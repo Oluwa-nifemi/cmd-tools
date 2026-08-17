@@ -4,7 +4,12 @@ set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 . "$SCRIPT_DIR/repl-lib.sh"
 
-root="$(require_project_root)"
+if [ "$#" -eq 1 ] && printf '%s\n' "$1" | grep -qE '^[0-9]+$'; then
+    # Index from `repls` listing — resolve without needing to cd into the project
+    root="$(resolve_worktree_by_index "$1")"
+else
+    root="$(require_project_root)"
+fi
 log_path="$(python3 - "$REPL_REGISTRY" "$root" <<'PY'
 import json
 import os
