@@ -1,0 +1,50 @@
+#!/bin/sh
+# Open a subshell cd'd into a REPL's project directory.
+#
+# A child process can't cd the parent shell, so this spawns an interactive
+# subshell in the target directory. Exit it (Ctrl-D or `exit`) to return.
+# If you'd rather just get the path for scripting, use `gotorepl --print N`.
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+
+usage() {
+    echo "Usage: gotorepl [--print] [INDEX]" >&2
+    echo >&2
+    echo "  INDEX    Go to the project for REPL #INDEX from 'repls'." >&2
+    echo "           Without an index, uses the current project's REPL." >&2
+    echo "  --print  Print the path instead of opening a subshell." >&2
+    exit 2
+}
+
+print_only=false
+index=""
+
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) usage ;;
+        --print) print_only=true ;;
+        *)
+            if printf '%s\n' "$arg" | grep -qE '^[0-9]+$'; then
+                index="$arg"
+            else
+                usage
+            fi
+            ;;
+    esac
+done
+
+if [ -n "$index" ]; then
+    root="$(resolve_worktree_by_index "$index")"
+else
+    root="$(require_project_root)"
+fi
+
+if [ "$print_only" = true ]; then
+    printf '%s\n' "$root"
+    exit 0
+fi
+
+echo "Entering $root (exit or Ctrl-D to return)." >&2
+cd "$root" && exec "$SHELL" -i

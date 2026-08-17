@@ -208,7 +208,7 @@ for index, (worktree, entry) in enumerate(ordered):
             lasting(now - entry["started_at"]),
             str(entry["port"]),
             started.get(worktree, "?"),
-            os.path.dirname(worktree.rstrip("/")).replace(home, "~", 1),
+            worktree.rstrip("/").replace(home, "~", 1),
             note,
         )
     )
@@ -242,5 +242,5 @@ for idx, (marker, name, used, up, port, app, parent, note) in enumerate(rows, st
     print(line)
 
 print()
-print(f"{dim}`seerepl N` tails a log, `killrepl N` stops a REPL.{off}")
+print(f"{dim}`seerepl N` tails a log, `killrepl N` stops a REPL, `gotorepl N` cd's into it.{off}")
 PY

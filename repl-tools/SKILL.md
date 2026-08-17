@@ -21,6 +21,7 @@ watchrepl
 killrepl          # kill REPL for the current project
 killrepl 2        # kill REPL #2 from `repls` listing
 seerepl 1         # tail log for REPL #1 without cd-ing into its project
+gotorepl 1        # cd into REPL #1's project directory
 ```
 
 Before running Clojure tests, reload both the changed source namespace and its
