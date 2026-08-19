@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Codex sends the session working directory as JSON on stdin. If parsing fails,
+# use the process directory so this hook never blocks session startup.
+payload=$(cat 2>/dev/null) || payload=
+cwd=$(printf '%s' "$payload" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("cwd", ""))' 2>/dev/null) || cwd=
+[ -n "$cwd" ] || cwd=$PWD
+
+root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
+local_file=$root/AGENTS.local.md
+[ -f "$local_file" ] || exit 0
+
+printf 'Local instructions from the repository root AGENTS.local.md:\n\n'
+cat "$local_file"
+
