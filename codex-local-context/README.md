@@ -2,8 +2,9 @@
 
 Load a Git repository's root-level `AGENTS.local.md` into Codex session context.
 
-The hook runs on `startup`, `resume`, `clear`, and `compact`. It prints nothing
-when the file is absent or the working directory is not inside a Git repository.
+The hook runs on `startup`, `clear`, and `compact`. It skips `resume` because the
+existing context already contains the local instructions. It prints nothing when
+the file is absent or the working directory is not inside a Git repository.
 
 ## Install
 

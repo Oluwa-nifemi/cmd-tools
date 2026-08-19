@@ -3,12 +3,19 @@ set -eu
 
 tool_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 hook=$tool_dir/codex-local-context
+hooks_config=$tool_dir/hooks.json
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 repo=$tmp/repo
 mkdir -p "$repo/nested/path"
 git -C "$repo" init -q
+
+grep -q '"matcher": "startup|clear|compact"' "$hooks_config"
+if grep -q '"matcher":.*resume' "$hooks_config"; then
+  echo "resume must not reinject local context" >&2
+  exit 1
+fi
 
 output=$(printf '{"cwd":"%s"}\n' "$repo" | "$hook")
 [ -z "$output" ] || { echo "expected no output without AGENTS.local.md" >&2; exit 1; }
