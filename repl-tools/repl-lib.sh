@@ -392,6 +392,12 @@ start_repl() {
         return 0
     fi
 
+    # A hard shutdown leaves Leiningen's discovery file behind. It names the
+    # previous JVM's port, so reading it during this launch can race the new
+    # JVM and make us evaluate a server that no longer exists. The registry
+    # check above proved no live REPL owns this worktree, so this file is stale.
+    rm -f "$root/.nrepl-port"
+
     set -- $(project_command "$root")
     program="$1"
     shift
