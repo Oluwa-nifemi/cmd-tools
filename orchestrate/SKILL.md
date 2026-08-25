@@ -1,11 +1,15 @@
 ---
 name: orchestrate
-description: Coordinate substantial multi-agent work without becoming the primary doer. Use when the user asks to "orchestrate this", "go into orchestration mode", "coordinate agents", or wants a complex build, research effort, artifact, or mixed project decomposed, routed, verified, and summarized.
+description: Coordinate substantial multi-agent work without becoming the primary doer. Use only when the user explicitly invokes $orchestrate or explicitly asks to use the orchestrate skill. Do not infer activation from task complexity or requests to coordinate agents.
 ---
 
 # Orchestrate
 
 Act as the coordinator. Establish the outcome, decompose work, assign bounded units to fresh agents, maintain task ownership, select the right validation for each unit, and report the result. Do not take over a unit merely because it is convenient.
+
+Do not interrupt a healthy agent merely to obtain a status update. For builds, cluster setup, browser automation, E2E checks, migrations, and other long-running operations, wait for completion or an agent-reported blocker. Interrupt only for a concrete safety issue, changed user direction, a known stuck command, or an explicit request to stop.
+
+For each code review pass, use one independent reviewer to assess correctness, security, quality, and unnecessary complexity together. Do not dispatch separate correctness and simplicity reviewers. Add a specialist reviewer only when a concrete high-risk concern requires separate expertise.
 
 ## Hands-off rule
 
@@ -13,7 +17,6 @@ The coordinator MUST NOT do implementation, debugging, investigation, fixing, or
 
 - Reading specs and plans to decompose work
 - Creating the orchestration log and conventions file
-- Writing presentation briefs
 - Dispatching, waiting on, and closing sub-agents
 - Committing reviewed work (staging + `git commit`, when authorized)
 - Creating and switching branches (lightweight git plumbing)
@@ -36,14 +39,13 @@ When a required source, integration, permission, or user-owned input is unavaila
 ## Start
 
 1. Identify the deliverable, success criteria, authority boundaries, and likely mode: `build`, `research`, `artifact`, or `mixed`.
-2. Ask whether the user wants a wrap-up presentation at the end. Explain that it pairs the durable orchestration record (how the work ran) with a deck or page describing what the work produced. Record any audience or format preference; default the audience to `self` and select the format from the actual run size at wrap-up.
-3. Ask one additional concise clarification only when an unresolved choice would materially change scope, output, external actions, or validation. Otherwise state the assumption and proceed.
-4. Read the matching workflow reference in full:
+2. Ask one concise clarification only when an unresolved choice would materially change scope, output, external actions, or validation. Otherwise state the assumption and proceed.
+3. Read the matching workflow reference in full:
    - Build: [references/build.md](references/build.md)
    - Research: [references/research.md](references/research.md)
    - Artifact: [references/artifact.md](references/artifact.md)
    - Mixed work: read every applicable reference and sequence the modes around their dependencies.
-5. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. Identify whether the active multi-agent surface is v1 or v2 and follow its dispatch contract. If the user requested the wrap-up presentation, also read [references/presentation-wrapup.md](references/presentation-wrapup.md).
+4. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. Identify whether the active multi-agent surface is v1 or v2 and follow its dispatch contract.
 
 ## Mode choice
 
@@ -58,4 +60,4 @@ Do not use orchestration for a small, self-contained task that one agent can saf
 
 ## Finish
 
-Report the completed deliverable, verification performed, decisions made under delegated authority, unresolved risks, and the locations of durable artifacts. When requested, render the presentation wrap-up after the completion record is final. Do not commit, push, publish, or make external changes unless the user explicitly authorized them.
+Report the completed deliverable, verification performed, decisions made under delegated authority, unresolved risks, and the locations of durable artifacts. Do not commit, push, publish, or make external changes unless the user explicitly authorized them.

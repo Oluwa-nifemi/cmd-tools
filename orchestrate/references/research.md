@@ -41,10 +41,3 @@ Dispatch a fresh synthesis/audit agent after the corpus is complete. It must rea
 5. The recommendation states trade-offs and what would cause it to change.
 
 Route factual or analytical gaps to the original investigator where possible, then have the curator reconcile the corpus. Record the audit outcome in the orchestration log and produce the concise decision memo or update the user's established record.
-
-## Presentation handoff
-
-When the user opted into a wrap-up presentation, the coordinator owns it. Use `orchestrator-log.md` for “how the work ran” and the finalized research corpus for “what the evidence supports.”
-
-- For a deck, also read `$research`'s `presentation-details.md` overlay.
-- For a smaller page, use the generic presentation flow while citing the corpus rather than reproducing it.

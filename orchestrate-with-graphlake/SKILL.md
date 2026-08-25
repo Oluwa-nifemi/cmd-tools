@@ -21,8 +21,8 @@ it or use `$orchestrate` instead.
 
 ## Start
 
-1. Follow `$orchestrate`'s Start section. Ask about the wrap-up presentation
-   and any material scope choice before work begins.
+1. Follow `$orchestrate`'s Start section. Resolve any material scope choice
+   before work begins.
 2. Ground with `where_am_i`. Search GraphLake for an existing work item that
    matches the task before creating a new one. Resume its active run and plan
    when found. Do not recreate a plan from chat history.
@@ -47,8 +47,8 @@ Record state when it happens. Do not reconstruct the run at closeout.
 | Convention pack or shared guidance | `agm:Artifact`; store concise text in `content`, otherwise record its path, MIME type, checksum, and summary |
 | Steering choice, scope change, recovery choice | `record_decision` with its basis and rejected alternative |
 | Review finding, test observation, blocker, source fact | `record_datapoint` with the appropriate kind |
-| Doer, reviewer, test, synthesis, or presentation report | `record_artifact`, linked to the producing task; large payloads remain on disk and are referenced by path or URI |
-| Commit, PR, rendered deck, report, screenshot, query, or test result | `record_artifact`, linked to the producing task |
+| Doer, reviewer, test, or synthesis report | `record_artifact`, linked to the producing task; large payloads remain on disk and are referenced by path or URI |
+| Commit, PR, report, screenshot, query, or test result | `record_artifact`, linked to the producing task |
 
 Use `local/<task>/` only as backing storage for large reports, logs, rendered
 files, and other physical payloads. Every durable file must have a corresponding
@@ -94,9 +94,6 @@ GraphLake artifact.
    criteria.
 4. Follow `$orchestrate`'s Finish section. The final response links or names
    GraphLake artifacts rather than an `orchestrator-log.md`.
-5. If the user requested a wrap-up presentation, follow `$orchestrate`'s
-   presentation reference. Record the resulting deck or one-pager as an
-   artifact.
 
 ## No secrets
 

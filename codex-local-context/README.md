@@ -1,6 +1,6 @@
 # codex-local-context
 
-Load a Git repository's root-level `AGENTS.local.md` into Codex session context.
+Load a Git repository's root-level `CLAUDE.local.md` into Codex session context.
 
 The hook runs on `startup`, `clear`, and `compact`. It skips `resume` because the
 existing context already contains the local instructions. It prints nothing when

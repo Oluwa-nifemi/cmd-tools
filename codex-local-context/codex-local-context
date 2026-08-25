@@ -7,9 +7,8 @@ cwd=$(printf '%s' "$payload" | python3 -c 'import json, sys; print(json.load(sys
 [ -n "$cwd" ] || cwd=$PWD
 
 root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
-local_file=$root/AGENTS.local.md
+local_file=$root/CLAUDE.local.md
 [ -f "$local_file" ] || exit 0
 
-printf 'Local instructions from the repository root AGENTS.local.md:\n\n'
+printf 'Local instructions from the repository root CLAUDE.local.md:\n\n'
 cat "$local_file"
-

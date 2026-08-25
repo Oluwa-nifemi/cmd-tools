@@ -2,11 +2,24 @@
 
 ## Keep the lead bounded
 
-Ensure `local/` exists; create it when absent. Before dispatching work, create `local/<task>/orchestrator-log.md`. This is the durable compact index for every orchestration run, not only runs that request a presentation. Keep a status table (`unit | owner | mode | dependency | state | validation | report`) plus concise steering decisions, incidents, and user flags. Append or update only the relevant entry; do not turn it into a transcript.
+Ensure `local/` exists; create it when absent. Before dispatching work, create `local/<task>/orchestrator-log.md`. This is the durable compact index for every orchestration run. Keep a status table (`unit | owner | mode | dependency | state | validation | report`) plus concise steering decisions, incidents, and user flags. Append or update only the relevant entry; do not turn it into a transcript.
 
 Keep detailed reports, source notes, and diagnostics in per-unit files under `local/<task>/` when the repository provides `local/`; otherwise use the project's established scratch location. Read detail only to make a decision that cannot be delegated; otherwise route the file to the agent that needs it.
 
 The coordinator's context window is the scarcest resource in the orchestration. Every line of diagnostic output, every `cat` of a source file, every test run consumed in the coordinator's turn is context that could have been spent on coordination. When tempted to "just quickly check" something, dispatch a sub-agent to check it and report back. The only exception is a single read-only verification command when a doer's report is implausible.
+
+## Monitoring long-running units
+
+Do not use an interrupt, cancellation, or redirect solely to request progress. Treat a running build, deployment, migration, browser flow, or E2E scenario as healthy until it reports a failure, completes, or has exceeded a concrete time bound set before dispatch. Prefer a long `wait_agent` timeout and completion notifications.
+
+Interrupt a unit only when one of these conditions applies:
+
+- The user changes or cancels the assignment.
+- Continuing creates a concrete safety, cost, or data-integrity risk.
+- A known command is stuck beyond its declared bound, with no expected progress.
+- The agent asks for input that requires immediate redirection.
+
+If a long-running unit needs observability, require milestone reports in its initial brief. Do not demand ad-hoc checkpoints while a command is running.
 
 ## Dispatch rules
 
@@ -21,11 +34,11 @@ The coordinator's context window is the scarcest resource in the orchestration. 
   - **Luna** — mechanically specified work: fixed-format extraction, inventory, lint/syntax checks, status reads against an unambiguous spec.
   - **Terra** — routine work and review: scoped build units with a written task-note/spec, documentation, search-and-summarize, standard code review.
   - **Sol or Opus** — reserved for genuine high-consequence judgment only: adversarial/security review, ambiguous requirements needing synthesis, irreversible or cross-system decisions. Do not use Sol/Opus by default or "to be safe" — that is the failure this rule exists to prevent.
-  - If a task genuinely spans tiers (e.g., a review unit doing both mechanical checks and one high-stakes judgment call), pick the tier for the riskiest part it must get right, not the average.
+  - If a task contains one high-risk judgment inside otherwise routine work, split that judgment into its own unit. Do not raise the model or effort for the whole task.
   - **Reasoning effort follows the unit's nature, not its model tier** — pick it independently:
-    - **low** — the default for most coding/build units: implementing a specified change, writing tests, mechanical migrations, routine fixes against a clear spec. Most doer work belongs here.
-    - **medium** — the default for most review units: independent read/reasoning review, falsifying claims against a spec, standard research synthesis. Most reviewer work belongs here.
-    - **high** — reserved for genuinely complex review only: adversarial security review, tracing subtle cross-system control flow, reconciling contradictory sources, a judgment call with real blast radius if wrong. Do not reach for `high` by default — justify it in the dispatch message when used.
+    - **low** — the default for nearly all units: code reading, call-site tracing, scoped research, implementation, tests, documentation, routine debugging, standard synthesis, and ordinary code review. A review label alone does not justify medium.
+    - **medium** — use only when the unit has a concrete ambiguity or architectural/cross-system correctness risk that low effort is unlikely to resolve reliably. State that exact risk in the dispatch message.
+    - **high** — use only for adversarial security review, subtle distributed control flow, irreversible decisions, or similarly high-impact judgment. State the exact risk in the dispatch message. Never use high for ordinary repository research or code reading.
     - **Never use anything above `high`** (no `xhigh`/`max`/`ultra`) for a delegated unit, regardless of model tier or perceived task difficulty.
   - Before ending the coordinator's dispatch step, audit every `spawn_agent` call just issued and confirm each one carries both an explicit, tier-justified `model` and an explicit, justified `reasoning_effort`. Treat a dispatch missing either as a protocol violation to fix immediately, not a stylistic omission.
 - Require a short message containing verdict, one-line validation result, and report path. Keep the detail in the report.

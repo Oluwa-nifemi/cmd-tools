@@ -1,6 +1,6 @@
 ---
 name: research
-description: Run a standalone or lightly delegated deep investigation while maintaining a durable evidence corpus. Use when the user asks to "research", "investigate", "deep dive", "let's dig into", or invokes /research. For substantial multi-agent, mixed, or independently reviewable work, use orchestrate instead; its research mode uses this corpus protocol.
+description: Run a standalone or lightly delegated deep investigation while maintaining a durable evidence corpus. Use only when the user explicitly invokes $research or explicitly asks to use the research skill. Do not infer activation from words such as research, investigate, deep dive, or dig into.
 ---
 
 # Research

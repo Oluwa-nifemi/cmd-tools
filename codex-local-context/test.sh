@@ -18,11 +18,11 @@ if grep -q '"matcher":.*resume' "$hooks_config"; then
 fi
 
 output=$(printf '{"cwd":"%s"}\n' "$repo" | "$hook")
-[ -z "$output" ] || { echo "expected no output without AGENTS.local.md" >&2; exit 1; }
+[ -z "$output" ] || { echo "expected no output without CLAUDE.local.md" >&2; exit 1; }
 
-printf 'Local instruction.\nSecond line.\n' > "$repo/AGENTS.local.md"
+printf 'Local instruction.\nSecond line.\n' > "$repo/CLAUDE.local.md"
 output=$(printf '{"cwd":"%s"}\n' "$repo/nested/path" | "$hook")
-expected='Local instructions from the repository root AGENTS.local.md:
+expected='Local instructions from the repository root CLAUDE.local.md:
 
 Local instruction.
 Second line.'
