@@ -7,6 +7,7 @@ import argparse
 import shutil
 import sys
 from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -31,6 +32,64 @@ REQUIRED = {
         "export-btn",
     ),
 }
+TEMPLATE_INSTRUCTION_TEXT = (
+    "PRESENTATION TEMPLATE",
+    "HOW TO USE:",
+    "replace everything between START and END",
+    "Example slide — delete me",
+)
+
+
+class ArtifactHTMLParser(HTMLParser):
+    """Collect browser-visible text and document structure from an artifact."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tag_counts: dict[str, int] = {}
+        self.visible_text: list[str] = []
+        self._hidden_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tag_counts[tag] = self.tag_counts.get(tag, 0) + 1
+        if tag in {"script", "style"}:
+            self._hidden_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"} and self._hidden_depth:
+            self._hidden_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._hidden_depth:
+            stripped = data.strip()
+            if stripped:
+                self.visible_text.append(stripped)
+
+
+def structural_failures(format_name: str, text: str) -> list[str]:
+    parser = ArtifactHTMLParser()
+    parser.feed(text)
+    parser.close()
+
+    failures = []
+    for tag in ("html", "head", "body"):
+        count = parser.tag_counts.get(tag, 0)
+        if count != 1:
+            failures.append(f"exactly one <{tag}> element, found {count}")
+
+    visible_text = "\n".join(parser.visible_text)
+    leaked = [token for token in TEMPLATE_INSTRUCTION_TEXT if token in visible_text]
+    if leaked:
+        failures.append("no browser-visible template instructions")
+
+    if format_name == "deck":
+        slide_count = text.count('<section class="slide')
+        cover_count = text.count('<section class="slide cover"')
+        if slide_count < 1:
+            failures.append("at least one deck slide")
+        if cover_count != 1:
+            failures.append(f"exactly one cover slide, found {cover_count}")
+
+    return failures
 
 
 def backup_path(output: Path) -> Path:
@@ -62,6 +121,7 @@ def verify(format_name: str, output: Path) -> None:
 
     text = output.read_text(encoding="utf-8")
     failures = [token for token in REQUIRED[format_name] if token not in text]
+    failures.extend(structural_failures(format_name, text))
     if "PLACEHOLDER" in text:
         failures.append("no PLACEHOLDER text")
 
