@@ -8,6 +8,29 @@ Keep detailed reports, source notes, and diagnostics in per-unit files under `lo
 
 The coordinator's context window is the scarcest resource in the orchestration. Every line of diagnostic output, every `cat` of a source file, every test run consumed in the coordinator's turn is context that could have been spent on coordination. When tempted to "just quickly check" something, dispatch a sub-agent to check it and report back. The only exception is a single read-only verification command when a doer's report is implausible.
 
+## Opaque report handoffs
+
+The coordinator reads only report metadata by default. It routes detailed reports by path without reading, summarizing, or reproducing their bodies. Read the body only when the user explicitly asks.
+
+Every doer and reviewer report starts with a small YAML frontmatter header:
+
+```yaml
+---
+status: revision_required
+summary: Two correctness issues remain.
+validation: review_complete
+---
+```
+
+Keep `summary` to one sentence. The report path comes from the agent's final message, so do not add a redundant path or recipient field to the header. The status determines the next action:
+
+- `ready_for_review` sends the report path to the reviewer.
+- `revision_required` sends the report path to the original doer.
+- `clean` accepts the review gate.
+- `blocked` or `escalation_required` reports the header to the user.
+
+An agent's final message contains only the report path. The coordinator reads the frontmatter, updates the orchestration log, and routes the path.
+
 ## Monitoring long-running units
 
 Do not use an interrupt, cancellation, or redirect solely to request progress. Treat a running build, deployment, migration, browser flow, or E2E scenario as healthy until it reports a failure, completes, or has exceeded a concrete time bound set before dispatch. Prefer a long `wait_agent` timeout and completion notifications.
@@ -41,7 +64,7 @@ If a long-running unit needs observability, require milestone reports in its ini
     - **high** — use only for adversarial security review, subtle distributed control flow, irreversible decisions, or similarly high-impact judgment. State the exact risk in the dispatch message. Never use high for ordinary repository research or code reading.
     - **Never use anything above `high`** (no `xhigh`/`max`/`ultra`) for a delegated unit, regardless of model tier or perceived task difficulty.
   - Before ending the coordinator's dispatch step, audit every `spawn_agent` call just issued and confirm each one carries both an explicit, tier-justified `model` and an explicit, justified `reasoning_effort`. Treat a dispatch missing either as a protocol violation to fix immediately, not a stylistic omission.
-- Require a short message containing verdict, one-line validation result, and report path. Keep the detail in the report.
+- Require the standard report frontmatter. The agent's final message contains only the report path.
 
 ## Authority and safety
 
@@ -53,8 +76,8 @@ Choose a gate that can falsify the unit's main risk. Do not impose code tests on
 
 | Unit type | Default gate |
 |---|---|
-| Code | Independent read/reasoning review plus relevant tests run by the doer |
+| Code | Independent read/reasoning review plus repository-appropriate validation performed by the doer |
 | Research | Fresh synthesis/audit for source quality, claim support, coverage, and uncertainty |
 | Artifact | Creator self-check plus coordinator inspection against the brief; use format-specific rendering or preview when it matters |
 
-When a gate finds material issues, route the report to the original doer, request a focused fix, and repeat the affected gate.
+When a report header says `revision_required`, send the report path to the original doer without reading or reproducing the detailed findings. Request a focused fix and repeat the affected gate.
