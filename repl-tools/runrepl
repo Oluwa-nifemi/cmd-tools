@@ -5,8 +5,10 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 . "$SCRIPT_DIR/repl-lib.sh"
 
 usage() {
-    echo "Usage: runrepl [--no-start] [--port-owner APP_PORT] CODE" >&2
+    echo "Usage: runrepl [--no-start] [--fresh] [--port-owner APP_PORT] CODE" >&2
     echo >&2
+    echo "  --fresh            Kill existing REPL, start a fresh one, then evaluate." >&2
+    echo "                     Use when stale state is unknown or widespread." >&2
     echo "  --port-owner APP_PORT  Target the worktree whose REPL holds APP_PORT" >&2
     echo "                         instead of the current project. Use this to stop" >&2
     echo "                         whichever worktree is running the app, e.g." >&2
@@ -14,11 +16,16 @@ usage() {
 }
 
 no_start=false
+fresh=false
 port_owner=""
 while true; do
     case "${1:-}" in
         --no-start)
             no_start=true
+            shift
+            ;;
+        --fresh)
+            fresh=true
             shift
             ;;
         --port-owner)
@@ -60,6 +67,13 @@ if [ -n "$port_owner" ]; then
 else
     root="$(require_project_root)"
     port="$(registry_port "$root")"
+    if [ "$fresh" = true ] && [ -n "$port" ]; then
+        # Kill the existing REPL before starting a clean one. This clears all
+        # loaded state, including stale vars from renamed/deleted definitions.
+        echo "Killing existing REPL for $(basename "$root") (--fresh)." >&2
+        "$SCRIPT_DIR/killrepl" >/dev/null 2>&1 || true
+        port=""
+    fi
     if [ -z "$port" ]; then
         if [ "$no_start" = true ]; then
             echo "No live nREPL is registered for $root (--no-start)." >&2
@@ -69,5 +83,22 @@ else
     fi
 fi
 
-clj-nrepl-eval -p "$port" "$code"
+# Evaluate and capture exit status. For test runs, clj-nrepl-eval may return 0
+# even when clojure.test reports failures in the output. Parse the test summary
+# to catch those and exit non-zero, so callers can trust the exit code.
+eval_exit=0
+output="$(clj-nrepl-eval -p "$port" "$code")" || eval_exit=$?
+printf '%s\n' "$output"
+
+if [ "$eval_exit" -eq 0 ]; then
+    # Look for clojure.test summary: "N failures, N errors"
+    if printf '%s\n' "$output" | grep -qE '^[0-9]+ failures, [0-9]+ errors'; then
+        if ! printf '%s\n' "$output" | grep -qE '^0 failures, 0 errors'; then
+            eval_exit=1
+        fi
+    fi
+fi
+
 touch_registry_entry "$root"
+exit "$eval_exit"
+
