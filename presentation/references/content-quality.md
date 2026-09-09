@@ -16,7 +16,15 @@ Read this file for every artifact.
 - Default to lean. Remove material that does not support the audience's goal.
 - Use a separate section or slide for a decision, deliverable, roadmap, or
   important caveat when it would otherwise be buried.
-- Prefer a table, stat, diagram, or short callout over a third paragraph.
+- Preserve important mechanism detail. Replace vague summaries with one
+  concrete example or labelled flow before adding more prose.
+- Choose structure by relationship:
+  - Sequence or transformation: flow with nearby examples.
+  - True comparison using common dimensions: table.
+  - Independent facts or metrics: cards or stat grid.
+  - One concept needing explanation: concise prose plus an example.
+- Do not use tables or cards only to reduce text. Split concepts when they
+  have different actors or mechanics.
 - Explain mechanics. Avoid slogans, strawman comparisons, and “myth” framing.
 
 ## Visuals

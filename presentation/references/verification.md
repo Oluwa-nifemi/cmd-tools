@@ -17,4 +17,11 @@ Before reporting completion, confirm:
 - The brief’s source claims are represented accurately.
 - No placeholder text remains.
 - Links, labels, and terminology are readable.
+- For each load-bearing section or slide:
+  - The actor and action are clear.
+  - A first-time reader can follow the mechanism.
+  - Important transformations show input and output.
+  - Examples sit beside the claim they explain.
+  - Tables compare; they do not hide sequences.
+  - Every included detail improves understanding.
 - The output path and any created backup path are reported.

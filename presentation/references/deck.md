@@ -8,6 +8,9 @@ region between the template markers.
 - Keep slide titles short and the deck lean.
 - Use details panels only for supporting material. The slide must stand on its
   own without opening one.
+- Do not make a slide cryptic to keep it short. If a mechanism needs several
+  steps, split it across slides or show one worked example in visible content.
+- Keep examples beside the claim or step they explain.
 - Put code in the template’s existing code modal pattern. Do not add a second
   navigation or modal system.
 - Do not alter hash routing, the slide counter, the TOC overlay, inline
