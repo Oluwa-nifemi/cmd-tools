@@ -96,8 +96,9 @@ actions the viewer can take, and the resulting state/output. Include:
 Keep the complete source context available to the renderer. Describe the
 process and audience, not a pixel-by-pixel layout. A small number of scenes
 with distinct questions is preferable to turning every bullet into a screen.
-The visualization renderer may author topic-specific markup, CSS, and logic
-inside the initialized template’s designated regions.
+The visualization renderer may replace the initialized composition, palette,
+typography, markup, and runtime to suit the mechanism while preserving useful
+accessible navigation and controls. The manuscript appearance is optional.
 
 ## Worked example: minimal deck
 

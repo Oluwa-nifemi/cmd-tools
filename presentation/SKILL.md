@@ -10,8 +10,9 @@ description: Build a self-contained HTML deck, one-page presentation, or interac
 - `deck`: a sequential talk with discrete slides.
 - `page`: a scrollable document read at the reader’s pace.
 - `visualization`: a presentation whose explanation depends on manipulating a
-  process, inspecting nested components, comparing scenarios, or watching state change. Use the same paper,
-  ink, green, and amber palette as the other formats. Interaction must reveal
+  process, inspecting nested components, comparing scenarios, or watching state
+  change. Choose colours, typography, and composition for the subject; use the
+  existing manuscript palette when requested. Interaction must reveal
   a mechanism or consequence; animated slide transitions alone do not qualify.
 
 ## Workflow

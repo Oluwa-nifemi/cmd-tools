@@ -27,5 +27,6 @@ For deck and page, edit only the template’s designated content region. Do not
 rewrite its CSS, JavaScript, navigation, commenting, or print chrome.
 
 For visualization, follow its reference: topic-specific markup, styles, and
-state transitions are editable. Preserve the shared tokens and working scene
-navigation, playback, reset, keyboard, reduced-motion, and print behaviour.
+state transitions, layout, typography, and palette are editable. Preserve useful
+navigation, playback, reset, keyboard, reduced-motion, and print behaviour;
+the starter is a functional example, not a required visual composition.
