@@ -41,5 +41,28 @@ HOW TO USE: replace everything between START and END -->
                 MODULE.verify("deck", output)
 
 
+class VisualizationTests(unittest.TestCase):
+    def test_initializer_selects_visualization_and_backs_up_existing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "visualization.html"
+            output.write_text("previous user content")
+            MODULE.initialize("visualization", output)
+            self.assertEqual(output.read_text(), MODULE.TEMPLATES["visualization"].read_text())
+            backups = list((output.parent / ".presentation-backups").glob("*.html"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(), "previous user content")
+
+    def test_filled_visualization_passes_shell_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "visualization.html"
+            text = MODULE.TEMPLATES["visualization"].read_text()
+            output.write_text(text.replace("HEADING_PLACEHOLDER", "A process").replace("SUMMARY_PLACEHOLDER", "Follow one item."))
+            MODULE.verify("visualization", output)
+
+    def test_rejects_visualization_without_live_status(self):
+        text = MODULE.TEMPLATES["visualization"].read_text().replace('aria-live="polite"', '')
+        self.assertIn("an accessible live status region", MODULE.structural_failures("visualization", text))
+
+
 if __name__ == "__main__":
     unittest.main()

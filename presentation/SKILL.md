@@ -1,9 +1,18 @@
 ---
 name: presentation
-description: Build a self-contained HTML deck or one-page presentation. Use when the user asks to make, render, or present a deck, slides, one-pager, scoped page, or tech talk.
+description: Build a self-contained HTML deck, one-page presentation, or interactive process visualization. Use when the user asks to make, render, or present a deck, slides, one-pager, scoped page, tech talk, interactive presentation, simulation, or process explainer.
 ---
 
 # Presentation skill
+
+## Choose a format
+
+- `deck`: a sequential talk with discrete slides.
+- `page`: a scrollable document read at the reader’s pace.
+- `visualization`: a presentation whose explanation depends on manipulating a
+  process, inspecting nested components, comparing scenarios, or watching state change. Use the same paper,
+  ink, green, and amber palette as the other formats. Interaction must reveal
+  a mechanism or consequence; animated slide transitions alone do not qualify.
 
 ## Workflow
 
@@ -23,15 +32,15 @@ description: Build a self-contained HTML deck or one-page presentation. Use when
 
    ```bash
    python3 scripts/presentation_artifact.py init \
-     --format <deck|page> \
+     --format <deck|page|visualization> \
      --output <path>
    # Edit the initialized artifact per the brief and renderer guide.
    python3 scripts/presentation_artifact.py verify \
-     --format <deck|page> \
+     --format <deck|page|visualization> \
      --output <path>
    ```
 
-   Do not read the script or either template file. The initializer selects
+   Do not read the script or the template files. The initializer selects
    the template and backs up an existing output automatically.
 3. **Report** the completed artifact and the verification result.
 
@@ -60,6 +69,7 @@ prompt. The calling skill must not read renderer-only resources or templates:
 
 - `template.html`
 - `page-template.html`
+- `visualization-template.html`
 - `references/renderer-guide.md`
 - the renderer's format-specific references
 
@@ -70,4 +80,4 @@ prompt. The calling skill must not read renderer-only resources or templates:
   `references/content-quality.md`, one selected format reference, and
   `references/verification.md`.
 - `scripts/presentation_artifact.py` selects and copies the template. The
-  renderer does not need to read either template.
+  renderer does not need to read the templates.
