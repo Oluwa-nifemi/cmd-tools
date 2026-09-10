@@ -1,6 +1,6 @@
 # Presentation brief format
 
-This is the contract between a calling skill and the `presentation` skill. The caller composes a brief in this shape; the presentation skill renders an HTML deck from it.
+This is the contract between a calling skill and the `presentation` skill. The caller composes a brief in this shape; the presentation skill renders the selected HTML presentation from it.
 
 ## Hard requirement for the dispatched sub-agent
 
@@ -17,7 +17,7 @@ failures).
 # Presentation brief
 
 ## Format
-<deck | page — selects which template the renderer starts from (template.html vs page-template.html). If omitted, the rendering skill asks the caller/user rather than assuming.>
+<deck | page | visualization — use visualization for interactive processes, simulations, or cause-and-effect exploration. Infer an unambiguous format from the request; ask only if the distinction materially changes the result.>
 
 ## Audience
 <execs | eng | mixed | self — tunes depth: execs get shorter content and fewer/no code modals, eng keeps deep-dive detail and code>
@@ -78,6 +78,27 @@ Notes: <optional>
 - Slide "<slide title>": /path/to/file.ext lines 42-78
 - Slide "<other slide>": inline (provide the code in the slide's expanded content)
 ```
+
+## Visualization brief additions
+
+For `format: visualization`, use a **Scene outline** in place of the slide
+outline. Each scene identifies a question, visible actors, initial state,
+actions the viewer can take, and the resulting state/output. Include:
+
+- **Mechanism:** what the model actually computes, including units and rules.
+- **Controls:** what changes, what resets, and the meaningful boundary cases.
+- **Exploration:** meaningful components and deeper operations/data the viewer
+  can inspect, including what live state is shown and how they return.
+- **Takeaway:** the observable result the scene should make understandable.
+- **Assumptions:** label illustrative numbers and simplifications. Do not claim
+  a toy simulation measures a real system.
+
+Keep the complete source context available to the renderer. Describe the
+process and audience, not a pixel-by-pixel layout. A small number of scenes
+with distinct questions is preferable to turning every bullet into a screen.
+The visualization renderer may replace the initialized composition, palette,
+typography, markup, and runtime to suit the mechanism while preserving useful
+accessible navigation and controls. The manuscript appearance is optional.
 
 ## Worked example: minimal deck
 

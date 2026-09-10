@@ -15,8 +15,15 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = {
     "deck": ROOT / "template.html",
     "page": ROOT / "page-template.html",
+    "visualization": ROOT / "visualization-template.html",
 }
 REQUIRED = {
+    "visualization": (
+        '<base target="_blank"',
+        "@media print",
+        "prefers-reduced-motion",
+        "export-btn",
+    ),
     "deck": (
         '<base target="_blank"',
         "window.location.hash",
@@ -47,10 +54,17 @@ class ArtifactHTMLParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.tag_counts: dict[str, int] = {}
         self.visible_text: list[str] = []
+        self.ids: set[str] = set()
+        self.has_live_region = False
         self._hidden_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tag_counts[tag] = self.tag_counts.get(tag, 0) + 1
+        attributes = dict(attrs)
+        if attributes.get("id"):
+            self.ids.add(attributes["id"])
+        if attributes.get("aria-live") in {"polite", "assertive"}:
+            self.has_live_region = True
         if tag in {"script", "style"}:
             self._hidden_depth += 1
 
@@ -88,6 +102,13 @@ def structural_failures(format_name: str, text: str) -> list[str]:
             failures.append("at least one deck slide")
         if cover_count != 1:
             failures.append(f"exactly one cover slide, found {cover_count}")
+
+    if format_name == "visualization":
+        for element_id in ("scene-nav", "viz-stage", "narration", "play-btn", "step-btn", "reset-btn"):
+            if element_id not in parser.ids:
+                failures.append(f"visualization element #{element_id}")
+        if not parser.has_live_region:
+            failures.append("an accessible live status region")
 
     return failures
 

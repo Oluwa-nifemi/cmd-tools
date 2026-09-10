@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base target="_blank">
+<title>HEADING_PLACEHOLDER</title>
+<style>
+:root{--paper:#f5f3ee;--paper-2:#efece4;--ink:#1c1b18;--ink-soft:#4a463e;--ink-faint:#6b665b;--rule:#d8d2c6;--accent:#3a6b3a;--accent-soft:#eaf0ea;--warn:#9a6a2f;--warn-soft:#f3ebdd;--font-display:"Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;--font-body:Georgia,"Times New Roman",serif;--font-mono:Menlo,"SF Mono",Consolas,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:1rem/1.55 var(--font-body)}button,input,select{font:inherit}button{cursor:pointer}button,a,input,select{touch-action:manipulation}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:4px}button:disabled{opacity:.4;cursor:default}button{border:1px solid var(--rule);background:transparent;color:var(--ink);padding:.65rem 1rem;border-radius:4px;font-family:var(--font-mono);font-size:.875rem;min-height:44px}button:hover:not(:disabled){border-color:var(--accent)}.primary{background:var(--accent);border-color:var(--accent);color:var(--paper)}.presentation{max-width:1440px;margin:auto;padding:1.75rem 3rem}.masthead{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--rule);padding-bottom:1rem;gap:1rem}.eyebrow{font:.75rem var(--font-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}h1{font:400 clamp(2rem,4vw,3.5rem)/1.12 var(--font-display);letter-spacing:-.03em;margin:1.75rem 0 .65rem}.subtitle{max-width:65ch;color:var(--ink-soft);margin:0 0 1.75rem}.scene-nav{display:flex;gap:.4rem;flex-wrap:wrap;padding-bottom:1.5rem}.scene-nav button{border:0;border-bottom:2px solid transparent;border-radius:0;color:var(--ink-faint)}.scene-nav button[aria-current="step"]{border-color:var(--accent);color:var(--accent)}.scene-heading{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;border-top:1px solid var(--rule);padding-top:1.25rem}.scene-heading h2{font:400 1.5rem var(--font-display);margin:0}.counter{font:.75rem var(--font-mono);color:var(--ink-faint)}#scene-description{color:var(--ink-soft);margin:.5rem 0 1.5rem}#viz-stage{min-height:300px}.transport{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:1.25rem 0}.progress-track{height:3px;background:var(--rule);flex:1;min-width:80px}.progress-track span{display:block;background:var(--accent);height:100%;width:0}#narration{border-left:3px solid var(--accent);padding:.85rem 1.1rem;background:var(--accent-soft);min-height:4.25rem;color:var(--ink-soft)}.footer{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;font:.75rem var(--font-mono);color:var(--ink-faint);padding-top:1.5rem}.print-note{display:none}svg{max-width:100%}
+@media(max-width:720px){.presentation{padding:1.2rem}.masthead{align-items:flex-start}h1{margin-top:1.4rem}.scene-nav{gap:.1rem}.scene-nav button{padding:.6rem}.scene-heading{align-items:flex-start}#viz-stage{min-height:230px}.transport{gap:.45rem}.transport button{padding:.65rem .8rem}.progress-track{flex-basis:100%;order:5}.footer{line-height:1.7}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+@media print{body{background:white}.presentation{padding:0}.masthead button,.scene-nav,.transport{display:none}.print-note{display:block;font-size:.875rem;color:var(--ink-soft)}#viz-stage{break-inside:avoid}#narration{background:none}.footer{border-top:1px solid var(--rule)}}
+#inspector{border:1px solid var(--rule);background:var(--paper-2);padding:1.25rem;margin:1rem 0}#inspector[hidden]{display:none}.inspector-chrome{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}#inspector-trail{display:flex;gap:.4rem;flex-wrap:wrap}#inspector-title{font:400 1.5rem var(--font-display)}#inspector-body{overflow-wrap:anywhere}
+@media(min-width:900px){.presentation{padding-top:1rem}.masthead{padding-bottom:.5rem}h1{font-size:2.75rem;margin:.9rem 0 .4rem}.subtitle{margin-bottom:.8rem}.scene-nav{padding-bottom:.65rem}.scene-heading{padding-top:.75rem}#scene-description{margin:.4rem 0 .65rem}.transport{padding:.5rem 0 .9rem}}
+/* TOPIC-STYLES:START */
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;padding:3rem 0}.node{padding:2rem 1rem;border-top:3px solid var(--rule);background:var(--paper-2)}.node.active{border-color:var(--accent);background:var(--accent-soft)}.node strong{font:400 1.5rem var(--font-display);display:block}.node span{font:.875rem var(--font-mono);color:var(--ink-soft)}@media(max-width:600px){.flow{grid-template-columns:1fr;padding:1rem 0;gap:.75rem}.node{padding:1rem}}
+/* TOPIC-STYLES:END */
+</style>
+</head>
+<body>
+<div class="presentation">
+<header><div class="masthead"><span class="eyebrow">An interactive presentation</span><button id="export-btn" type="button">Print snapshot</button></div><h1>HEADING_PLACEHOLDER</h1><p class="subtitle">SUMMARY_PLACEHOLDER</p></header>
+<nav class="scene-nav" id="scene-nav" aria-label="Presentation scenes"></nav>
+<main><div class="scene-heading"><h2 id="scene-title"></h2><span class="counter" id="scene-counter"></span></div><p id="scene-description"></p><div class="transport" aria-label="Playback controls"><button class="primary" id="play-btn" type="button">Play</button><button id="step-btn" type="button">Step</button><button id="reset-btn" type="button">Reset</button><div class="progress-track" aria-hidden="true"><span id="progress-fill"></span></div><span class="counter" id="step-counter"></span></div>
+<div id="viz-stage"></div>
+<aside id="inspector" hidden aria-labelledby="inspector-title"><div class="inspector-chrome"><nav id="inspector-trail" aria-label="Component breadcrumb"></nav><div><button id="inspect-back" type="button">Back</button> <button id="inspect-close" type="button">Close details</button></div></div><h3 id="inspector-title" tabindex="-1"></h3><div id="inspector-body"></div></aside>
+
+<p id="narration" role="status" aria-live="polite" aria-atomic="true"></p><p class="print-note">Snapshot of the current scene and settings. Open the HTML presentation to interact.</p></main>
+<footer class="footer"><span>Illustrative model · not production measurements</span><span>← → scenes · Space play / pause</span></footer>
+</div>
+<script>
+'use strict';
+const stage = document.getElementById('viz-stage');
+/* TOPIC-SCRIPT:START */
+const scenes = [{
+ title:'Follow one item',description:'Step through a simple input, transformation, and output.',steps:3,
+ reset(){},
+ render(step){
+  const names=['Input','Transform','Output'];
+  stage.innerHTML='<div class="flow">'+names.map((name,i)=>'<div class="node '+(step>i?'active':'')+'"><strong>'+name+'</strong><span>'+(step>i?'Complete':'Waiting')+'</span><button type="button" data-inspect="'+i+'">Inspect '+name+'</button></div>').join('')+'</div>';
+  return ['Ready. One item will move through three stages.','An input arrives.','The transformation changes the input.','The output is ready.'][step];
+ },
+ inspect(path,step){
+  const i=Number(path[0]), names=['Input','Transform','Output'];
+  if(!Number.isInteger(i)||i<0||i>2)return null;
+  if(path.length===1)return {title:names[i],html:'<p>This stage is '+(step>i?'complete':'waiting')+'.</p><button type="button" data-inspect="'+i+'/record">Inspect the item</button>'};
+  return {title:'Item state',html:'<p>Item 01 · '+(step>i?'processed by ':'waiting for ')+names[i]+'.</p>'};
+ }
+}];
+/* TOPIC-SCRIPT:END */
+let sceneIndex=0, currentStep=0, playback=null, inspectionPath=[], inspectionOrigin=null;
+const playButton=document.getElementById('play-btn');
+const stepButton=document.getElementById('step-btn');
+const nav=document.getElementById('scene-nav');
+function pause(){if(playback!==null)clearInterval(playback);playback=null;playButton.textContent='Play';playButton.setAttribute('aria-pressed','false');}
+function closeInspection(restore=true){inspectionPath=[];document.getElementById('inspector').hidden=true;if(restore&&inspectionOrigin?.isConnected)inspectionOrigin.focus({preventScroll:true});}
+function renderInspection(){
+ if(!inspectionPath.length)return;
+ const info=scenes[sceneIndex].inspect?.(inspectionPath,currentStep);
+ if(!info){closeInspection(false);return;}
+ document.getElementById('inspector').hidden=false;
+ document.getElementById('inspector-title').textContent=info.title;
+ document.getElementById('inspector-body').innerHTML=info.html;
+ const trail=document.getElementById('inspector-trail');trail.replaceChildren();
+ const root=document.createElement('button');root.type='button';root.textContent='Overview';root.onclick=()=>closeInspection();trail.append(root);
+ inspectionPath.forEach((part,i)=>{const button=document.createElement('button');button.type='button';button.textContent=scenes[sceneIndex].inspect(inspectionPath.slice(0,i+1),currentStep)?.title||part;button.disabled=i===inspectionPath.length-1;button.onclick=()=>inspect(inspectionPath.slice(0,i+1));trail.append(button);});
+ info.bind?.(document.getElementById('inspector-body'));
+}
+function inspect(path){pause();if(!inspectionPath.length)inspectionOrigin=document.activeElement;inspectionPath=[...path];renderInspection();if(inspectionPath.length)document.getElementById('inspector-title').focus({preventScroll:true});}
+function refresh(){
+ const scene=scenes[sceneIndex];
+ const focused=document.activeElement;
+ const focusedId=focused?.id;
+ const selection=focused instanceof HTMLInputElement && ['text','search','url','tel','password'].includes(focused.type)?[focused.selectionStart,focused.selectionEnd]:null;
+ const explanation=scene.render(currentStep);
+ renderInspection();
+ if(focusedId&&!focused.isConnected){const replacement=document.getElementById(focusedId);replacement?.focus({preventScroll:true});if(selection&&replacement instanceof HTMLInputElement)replacement.setSelectionRange(...selection);}
+ document.getElementById('narration').textContent=scene.narration?.(currentStep)??explanation??'';
+ document.getElementById('step-counter').textContent=currentStep+' / '+scene.steps;
+ document.getElementById('progress-fill').style.width=(scene.steps?currentStep/scene.steps*100:100)+'%';
+ stepButton.disabled=currentStep>=scene.steps;
+ if(currentStep>=scene.steps)pause();
+ playButton.disabled=currentStep>=scene.steps;
+}
+function next(){if(currentStep<scenes[sceneIndex].steps){currentStep++;refresh();}}
+function reset(){pause();currentStep=0;scenes[sceneIndex].reset?.();refresh();}
+function go(index){
+ if(index<0||index>=scenes.length)return;
+ pause();closeInspection(false);scenes[sceneIndex]?.dispose?.();sceneIndex=index;
+ document.getElementById('scene-title').textContent=scenes[index].title;
+ document.getElementById('scene-description').textContent=scenes[index].description;
+ document.getElementById('scene-counter').textContent=String(index+1).padStart(2,'0')+' / '+String(scenes.length).padStart(2,'0');
+ [...nav.children].forEach((button,i)=>{if(i===index)button.setAttribute('aria-current','step');else button.removeAttribute('aria-current');});
+ reset();
+}
+function togglePlay(){if(playback!==null){pause();return;}if(currentStep>=scenes[sceneIndex].steps)return;playButton.textContent='Pause';playButton.setAttribute('aria-pressed','true');playback=setInterval(next,1200);}
+const presentation={refresh,pause,reset,go,inspect,closeInspection,get step(){return currentStep;},get scene(){return sceneIndex;}};
+scenes.forEach((scene,i)=>{const b=document.createElement('button');b.type='button';b.textContent=String(i+1).padStart(2,'0')+' '+scene.title;b.addEventListener('click',()=>go(i));nav.appendChild(b);});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-inspect]');if(button)inspect(button.dataset.inspect.split('/'));});
+document.getElementById('inspect-close').onclick=()=>closeInspection();
+document.getElementById('inspect-back').onclick=()=>{if(inspectionPath.length>1)inspect(inspectionPath.slice(0,-1));else closeInspection();};
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&inspectionPath.length){event.preventDefault();closeInspection();}});
+playButton.addEventListener('click',togglePlay);stepButton.addEventListener('click',next);document.getElementById('reset-btn').addEventListener('click',reset);document.getElementById('export-btn').addEventListener('click',()=>{pause();window.print();});
+document.addEventListener('keydown',event=>{if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.target.closest('button,input,select,textarea,a,[contenteditable]:not([contenteditable="false"]),[role="slider"]'))return;if(event.key==='ArrowRight'){event.preventDefault();go(sceneIndex+1);}else if(event.key==='ArrowLeft'){event.preventDefault();go(sceneIndex-1);}else if(event.code==='Space'){event.preventDefault();togglePlay();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+window.addEventListener('pagehide',()=>{pause();scenes[sceneIndex]?.dispose?.();});
+go(0);
+</script>
+</body>
+</html>
