@@ -6,6 +6,7 @@ REPL_CACHE_DIR="${HOME}/.cache/zed-clojure-repl"
 REPL_REGISTRY="${REPL_CACHE_DIR}/registry.json"
 REPL_LOCK_DIR="${REPL_CACHE_DIR}/locks"
 REPL_START_TIMEOUT=120
+REPL_EVAL_TIMEOUT=10
 
 resolve_project_root() {
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -248,10 +249,49 @@ PY
             printf '%s\n' "$port"
             return 0
         fi
+        # Leiningen can keep its launcher alive after the project JVM fails.
+        # Detect that child failure instead of waiting for the full timeout.
+        if grep -q 'Subprocess failed (exit code:' "$log_path" 2>/dev/null; then
+            return 2
+        fi
         sleep 1
         elapsed=$((elapsed + 1))
     done
     return 1
+}
+
+stop_repl_process() {
+    pid="$1"
+    # The launcher creates a new session, so its PID is also its process-group
+    # ID. Kill the group to avoid leaving Leiningen and its children behind.
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+}
+
+print_startup_failure() {
+    log_path="$1"
+    grep -E 'Exception in thread|Syntax error|Caused by:|Subprocess failed' "$log_path" 2>/dev/null | tail -n 12 >&2 || true
+}
+
+repl_accepts_evaluation() {
+    port="$1"
+    timeout="$2"
+    # A TCP listener is not sufficient proof of readiness. Bound the probe so
+    # a temporary or wedged nREPL cannot block startrepl indefinitely.
+    python3 - "$port" "$timeout" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(
+        ["clj-nrepl-eval", "-p", sys.argv[1], "nil"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=int(sys.argv[2]),
+    )
+except (OSError, subprocess.TimeoutExpired):
+    raise SystemExit(1)
+raise SystemExit(result.returncode)
+PY
 }
 
 register_repl() {
@@ -427,13 +467,27 @@ os.execvpe(
     ) >/dev/null 2>&1 &
     pid=$!
 
-    if ! port="$(wait_for_port "$root" "$log_path")"; then
-        echo "runrepl: timed out waiting for nREPL in $root; see $log_path" >&2
+    wait_status=0
+    port="$(wait_for_port "$root" "$log_path")" || wait_status=$?
+    if [ "$wait_status" -ne 0 ]; then
+        stop_repl_process "$pid"
+        if [ "$wait_status" -eq 2 ]; then
+            echo "runrepl: project failed while starting nREPL in $root" >&2
+            print_startup_failure "$log_path"
+        else
+            echo "runrepl: timed out waiting for nREPL in $root after ${REPL_START_TIMEOUT}s; see $log_path" >&2
+        fi
         return 1
     fi
 
-    if ! clj-nrepl-eval -p "$port" "nil" >/dev/null; then
-        echo "runrepl: nREPL on port $port did not accept an evaluation; see $log_path" >&2
+    if ! repl_accepts_evaluation "$port" "$REPL_EVAL_TIMEOUT"; then
+        stop_repl_process "$pid"
+        if grep -q 'Subprocess failed (exit code:' "$log_path" 2>/dev/null; then
+            echo "runrepl: project failed while starting nREPL in $root" >&2
+            print_startup_failure "$log_path"
+        else
+            echo "runrepl: nREPL on port $port did not accept an evaluation within ${REPL_EVAL_TIMEOUT}s; see $log_path" >&2
+        fi
         return 1
     fi
 
