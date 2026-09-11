@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Scheduling"
+  short_description: "Create and verify Codex reminders and recurring automations"
+  default_prompt: "Schedule this Codex automation and verify that it is saved, active, correctly targeted, and has the intended next occurrence."
