@@ -14,4 +14,8 @@ region between the template markers.
 - Use cards only for independent items, not sequential instructions.
 - Prefer a short text or labelled flow for a simple procedure.
 - Use `<details class="fold">` only for long, optional appendix material.
-- Do not alter the inline TOC, comments, export button, or print stylesheet.
+- PDF export uses A4 landscape orientation and starts each top-level section
+  on a new page. Oversized sections may continue naturally rather than clip.
+- The export helper also creates a full-height PNG of the screen layout.
+- Preserve the template's print stylesheet and both download links.
+- Do not alter the inline TOC, comments, export controls, or print stylesheet.

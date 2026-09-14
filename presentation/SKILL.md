@@ -29,11 +29,17 @@ description: Build a self-contained HTML deck or one-page presentation. Use when
    python3 scripts/presentation_artifact.py verify \
      --format <deck|page> \
      --output <path>
+   python3 scripts/presentation_artifact.py export \
+     --format page \
+     --output <path>
    ```
 
    Do not read the script or either template file. The initializer selects
    the template and backs up an existing output automatically.
-3. **Report** the completed artifact and the verification result.
+   For page format, the export command creates sibling `*-sections.pdf` and
+   `*-long.png` files. The PDF uses A4 landscape and starts each top-level
+   section on a new page. An oversized section may continue onto another page.
+3. **Report** the completed HTML, both page exports, and verification results.
 
 ## Feedback revisions
 

@@ -24,3 +24,14 @@ Read these files in this order:
 
 Edit only the template's designated content region. Do not rewrite its CSS,
 JavaScript, navigation, commenting, or print chrome.
+
+After verification, page artifacts must also be exported:
+
+```bash
+python3 scripts/presentation_artifact.py export \
+  --format page \
+  --output <path>
+```
+
+Inspect the generated section-per-page PDF and full-height PNG. Check every PDF
+page because pagination problems can affect only one section.

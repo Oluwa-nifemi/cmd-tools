@@ -26,9 +26,10 @@
     - <details class="fold"> is the ONE remaining opt-in collapse, reserved for
       genuinely long, genuinely optional appendix-grade material (a raw dump, a
       full transcript). Default to NOT using it. Never nest a fold in a fold.
-    - @media print stylesheet that flattens the whole document: forces every
-      <details class="fold"> open, hides the TOC, no pagination hacks — plus an
-      Export-to-PDF button calling window.print()
+    - @media print stylesheet that starts each top-level section on a new A4
+      landscape page and lets oversized sections continue without clipping
+    - download links for the section-per-page PDF and full-height PNG generated
+      by scripts/presentation_artifact.py export
 
   HOW TO USE:
     1. Replace TITLE_PLACEHOLDER and SUBTITLE_PLACEHOLDER in <head> and
@@ -242,13 +243,26 @@
   }
   .export-btn:hover { opacity: 1; }
 
-  /* ── Print: flat document, everything open, chrome hidden, no pagination hacks ── */
-  @page { size: auto; margin: 15mm 18mm; }
+  /* Each section starts cleanly on a sheet. We do not force break-inside: avoid
+     on the section itself because an unusually tall section must remain printable. */
+  @page { size: A4 landscape; margin: 15mm 18mm; }
   @media print {
-    body { padding-bottom: 0; }
+    html, body { background: #fff; }
+    body { padding-bottom: 0; font-size: 10pt; }
+    header { max-width: none; padding: 0 0 8mm; margin: 0 0 8mm; }
+    main { max-width: none; padding: 0; margin: 0; }
     nav.toc, .export-btn, .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn, #comments-panel-btn { display: none !important; }
-    section.section, details.fold { border: none; background: none; padding: 0; margin: 0 0 1rem; }
+    section.section { break-before: page; page-break-before: always; border: none; background: none; padding: 0; margin: 0; }
+    section.section:first-of-type { break-before: auto; page-break-before: auto; }
+    details.fold { border: none; background: none; padding: 0; margin: 0 0 0.6rem; }
+    h2.section-head { font-size: 17pt; margin-bottom: 5mm; padding-bottom: 3mm; }
     h2.section-head::before, details.fold > summary::before { display: none; }
+    .section-body p, .section-body li { font-size: 9.5pt; }
+    .section-body table { font-size: 8.8pt; margin: 4mm 0; }
+    .section-body th, .section-body td { padding: 2.5mm 3mm; }
+    .callout { margin: 4mm 0; padding: 3mm 4mm; font-size: 8.8pt; }
+    .statgrid { margin: 4mm 0; gap: 3mm; }
+    .stat { padding: 3mm 4mm; }
     .callout { break-inside: avoid; }
     /* Force every opt-in fold open in print — collapsed content must not be lost in the PDF */
     details.fold { display: block !important; }
@@ -358,7 +372,8 @@
 </main>
 
 <div id="page-comment-controls">
-  <button class="export-btn" onclick="window.print()" title="Export to PDF">Export PDF</button>
+  <a id="section-pdf-link" class="export-btn" download title="Download the section-per-page A4 PDF">Section PDF</a>
+  <a id="long-png-link" class="export-btn" download title="Download the full-height page image">Long PNG</a>
   <button id="comments-panel-btn">Comments (<span id="comment-count">0</span>)</button>
 </div>
 <button id="selection-comment-btn" class="selection-comment-btn">💬 Comment</button>
@@ -384,6 +399,10 @@
 
 <script>
   (function () {
+    var artifactStem = decodeURIComponent(location.pathname.split('/').pop() || 'presentation').replace(/\.html?$/i, '');
+    document.getElementById('section-pdf-link').href = artifactStem + '-sections.pdf';
+    document.getElementById('long-png-link').href = artifactStem + '-long.png';
+
     var STORE_KEY = 'presentationComments:' + location.pathname;
     var CONTENT_ROOT = 'main';
 
