@@ -299,4 +299,48 @@ kill "$owner_pid" 2>/dev/null || true
 kill -TERM "-$concurrent_pid" 2>/dev/null || true
 rm -rf "$lock"
 
+# A REPL process that exits without Leiningen's failure line must fail the
+# start at once, not hold the lock for the full startup timeout.
+cat > "$bin/lein" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+lock_root child-exits
+rmdir "$lock"
+start_time="$(date +%s)"
+# Run in a subshell like runrepl's $(start_repl) so the EXIT trap clears the lock.
+if (start_repl "$TEST_DIR/child-exits") >/dev/null 2>"$TEST_DIR/child-exits.err"; then
+    echo 'expected startup to fail when the REPL process exits' >&2
+    exit 1
+fi
+[ $(( $(date +%s) - start_time )) -lt 5 ]
+grep -q 'REPL process exited' "$TEST_DIR/child-exits.err"
+[ ! -d "$lock" ]
+
+# killrepl must handle startup state that has a lock but no registry entry.
+# Without --force it reports the owner. With --force it stops the owner and
+# its REPL process group and clears the lock.
+lock_root lock-only
+sleep 60 & owner_pid=$!
+set -- $(spawn_listener 127.0.0.1); child_pid=$1
+printf '%s\n' "$owner_pid" > "$lock/pid"
+printf '%s\n' "$child_pid" > "$lock/child_pid"
+if (cd "$TEST_DIR/lock-only" && "$SCRIPT_DIR/killrepl") >/dev/null 2>"$TEST_DIR/lock-only.err"; then
+    echo 'expected killrepl without --force to leave a live startup alone' >&2
+    exit 1
+fi
+grep -qF "lock=$lock" "$TEST_DIR/lock-only.err"
+grep -qF "owner-pid=$owner_pid" "$TEST_DIR/lock-only.err"
+grep -qF 'killrepl --force' "$TEST_DIR/lock-only.err"
+expect_alive "$owner_pid" 'killrepl without --force must not stop a startup'
+(cd "$TEST_DIR/lock-only" && "$SCRIPT_DIR/killrepl" --force) >/dev/null 2>&1
+expect_dead "$owner_pid" 'killrepl --force stops the lock owner'
+expect_dead "$child_pid" 'killrepl --force stops the REPL process group'
+[ ! -d "$lock" ]
+
+lock_root dead-lock-only
+printf '%s\n' "$dead_pid" > "$lock/pid"
+(cd "$TEST_DIR/dead-lock-only" && "$SCRIPT_DIR/killrepl") >/dev/null 2>&1
+[ ! -d "$lock" ]
+
 echo 'repl-tools tests passed'

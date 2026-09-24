@@ -343,6 +343,11 @@ print(os.path.join(lock_dir, f"{sanitized}.lock"))
 PY
 }
 
+remove_lock() {
+    rm -f "$1/pid" "$1/child_pid"
+    rmdir "$1" 2>/dev/null || true
+}
+
 wait_for_port() {
     root="$1"
     log_path="$2"
@@ -383,6 +388,11 @@ PY
         # Detect that child failure instead of waiting for the full timeout.
         if grep -q 'Subprocess failed (exit code:' "$log_path" 2>/dev/null; then
             return 2
+        fi
+        # The launcher writes this line when the project command exits. Its
+        # `tail` stays alive, so the process group alone never shows the exit.
+        if grep -q '^zed-nrepl: REPL process exited' "$log_path" 2>/dev/null; then
+            return 3
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -537,8 +547,7 @@ start_repl() {
         now="$(date +%s)"
         lock_pid="$(cat "$lock_path/pid" 2>/dev/null || true)"
         if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
-            rm -f "$lock_path/pid"
-            rmdir "$lock_path" 2>/dev/null || true
+            remove_lock "$lock_path"
             continue
         fi
         # The owner writes its PID right after mkdir. A lock that stays empty
@@ -557,7 +566,7 @@ start_repl() {
         # A live owner may be a slow but valid startup in another terminal, so
         # never kill it here. Fail with enough detail to run killrepl instead.
         if [ $((now - wait_started)) -ge "$REPL_LOCK_WAIT_TIMEOUT" ]; then
-            echo "runrepl: timed out after ${REPL_LOCK_WAIT_TIMEOUT}s waiting for REPL startup lock for $root; lock=$lock_path owner-pid=${lock_pid:-unknown}" >&2
+            echo "runrepl: timed out after ${REPL_LOCK_WAIT_TIMEOUT}s waiting for REPL startup lock for $root; lock=$lock_path owner-pid=${lock_pid:-unknown}. Run 'killrepl --force' to stop that startup." >&2
             return 1
         fi
         if [ "$announced_wait" = false ]; then
@@ -573,8 +582,7 @@ start_repl() {
     done
 
     cleanup_lock() {
-        rm -f "$lock_path/pid"
-        rmdir "$lock_path" 2>/dev/null || true
+        remove_lock "$lock_path"
     }
     trap cleanup_lock EXIT HUP INT TERM
     printf '%s\n' "$$" > "$lock_path/pid"
@@ -611,7 +619,7 @@ os.execvpe(
     [
         "sh",
         "-c",
-        "tail -f /dev/null | exec \"$@\" >> \"$ZED_NREPL_LOG\" 2>&1",
+        "tail -f /dev/null | { \"$@\" >> \"$ZED_NREPL_LOG\" 2>&1; echo \"zed-nrepl: REPL process exited with status $?\" >> \"$ZED_NREPL_LOG\"; }",
         "zed-nrepl",
         *sys.argv[1:],
     ],
@@ -620,6 +628,8 @@ os.execvpe(
 ' "$program" "$@"
     ) >/dev/null 2>&1 &
     pid=$!
+    # killrepl --force reads this to stop a startup that has no registry entry.
+    printf '%s\n' "$pid" > "$lock_path/child_pid"
 
     wait_status=0
     port="$(wait_for_port "$root" "$log_path")" || wait_status=$?
@@ -628,6 +638,9 @@ os.execvpe(
         if [ "$wait_status" -eq 2 ]; then
             echo "runrepl: project failed while starting nREPL in $root" >&2
             print_startup_failure "$log_path"
+        elif [ "$wait_status" -eq 3 ]; then
+            echo "runrepl: REPL process exited before nREPL started in $root; see $log_path" >&2
+            tail -n 12 "$log_path" >&2
         else
             echo "runrepl: timed out waiting for nREPL in $root after ${REPL_START_TIMEOUT}s; see $log_path" >&2
         fi

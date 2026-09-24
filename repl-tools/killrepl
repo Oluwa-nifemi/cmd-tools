@@ -10,12 +10,20 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 . "$SCRIPT_DIR/repl-lib.sh"
 
 usage() {
-    echo "Usage: killrepl [INDEX]" >&2
+    echo "Usage: killrepl [--force] [INDEX]" >&2
     echo >&2
     echo "  INDEX  Kill the REPL at this index from 'repls'." >&2
     echo "         Without an index, kills the REPL for the current project." >&2
+    echo "  --force  Also stop a live startup that holds the lock but has no" >&2
+    echo "           registry entry yet." >&2
     exit 2
 }
+
+force=false
+if [ "${1:-}" = --force ]; then
+    force=true
+    shift
+fi
 
 case "${1:-}" in
     -h|--help) usage ;;
@@ -33,6 +41,36 @@ elif [ "$#" -eq 0 ]; then
     root="$(require_project_root)"
 else
     usage
+fi
+
+# A startup that has not registered yet exists only as its lock directory.
+# Without this, killrepl reported "no registry entry" and the next start
+# waited on the same lock again. A dead owner's lock is always safe to clear.
+# A live owner may be a valid startup in another terminal, so stopping it
+# needs --force.
+clear_startup_lock() {
+    lock_path="$(lock_path_for "$root")"
+    [ -d "$lock_path" ] || return 1
+    name="$(basename "$root")"
+    owner="$(cat "$lock_path/pid" 2>/dev/null || true)"
+    child="$(cat "$lock_path/child_pid" 2>/dev/null || true)"
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$force" = false ]; then
+        age=$(( $(date +%s) - $(stat -f %m "$lock_path") ))
+        command="$(ps -o command= -p "$owner" 2>/dev/null || true)"
+        echo "killrepl: REPL startup for $name is in progress; lock=$lock_path owner-pid=$owner age=${age}s command=${command:-unknown}" >&2
+        echo "Run 'killrepl --force' to stop it and clear the lock." >&2
+        exit 1
+    fi
+    # The REPL runs in its own session, so its PID is also its process group.
+    [ -n "$child" ] && kill -TERM "-$child" 2>/dev/null || true
+    [ -n "$owner" ] && kill -TERM "$owner" 2>/dev/null || true
+    remove_lock "$lock_path"
+    echo "Cleared REPL startup lock for $name."
+    return 0
+}
+
+if [ -z "$(registry_port "$root")" ] && clear_startup_lock; then
+    exit 0
 fi
 
 # Kill the process group and remove the registry entry. Using killpg via
