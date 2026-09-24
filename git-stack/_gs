@@ -4,7 +4,7 @@
 
 local -a subcmds
 subcmds=(
-  init create commit track stack restack
+  init create commit track stack restack status
   ls list log up down top bottom
   move insert untrack fold split land
   push push-pr pr
@@ -15,7 +15,7 @@ subcmds=(
 # Helper: complete tracked branch names.
 _gs_branch_names() {
   local gs_dir d
-  gs_dir="$(git rev-parse --git-dir 2>/dev/null)/gs/branches" || return
+  gs_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/gs/branches" || return
   [[ -d "$gs_dir" ]] || return
   local -a names=()
   local f encoded
@@ -30,8 +30,8 @@ _gs_branch_names() {
 # Helper: complete recent commit hashes on current branch.
 _gs_commit_hashes() {
   local parent trunk gs_dir cur_parent
-  trunk="$(cat "$(git rev-parse --git-dir 2>/dev/null)/gs/config" 2>/dev/null)" || trunk="main"
-  gs_dir="$(git rev-parse --git-dir 2>/dev/null)/gs/branches" || return
+  trunk="$(cat "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/gs/config" 2>/dev/null)" || trunk="main"
+  gs_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/gs/branches" || return
   local cur
   cur="$(git symbolic-ref --short HEAD 2>/dev/null)" || return
   local encoded
@@ -80,7 +80,7 @@ case "$state" in
         ;;
       restack)
         _alternative \
-          'flags:flag:(--all --autostash --continue --upstack)'
+        'flags:flag:(--all --autostash --continue --abort --upstack)'
         ;;
       push)
         _gs_branch_names
@@ -110,4 +110,3 @@ case "$state" in
     esac
     ;;
 esac
-

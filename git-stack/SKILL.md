@@ -20,9 +20,15 @@ A **stack** is a chain of branches where each branch knows its parent:
 main → feat/api → feat/frontend → feat/tests
 ```
 
-Metadata lives in `.git/gs/`:
+Metadata lives under the repository's shared Git directory, normally `.git/gs/`:
 - `.git/gs/config` — trunk branch name (e.g. `main`)
 - `.git/gs/branches/` — one file per tracked branch, containing its parent's name
+- `.git/gs/bases/` — durable per-branch fork OIDs used during restacks
+- `.git/gs/operation/` — the active operation journal, when present
+
+Linked worktrees share this metadata. Legacy worktree-local copies migrate
+automatically only when every copy agrees. Conflicting copies stop with an
+error so no stack is selected silently.
 
 ## Typical workflow
 
@@ -84,7 +90,8 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 |---------|-------------|
 | `gs track <b1> [b2] ... [--onto <branch>]` | Track existing branches as a stack and auto-restack them |
 | `gs stack <branch>` | Add a branch on top of the current one |
-| `gs restack [--all] [--autostash] [--continue]` | Manually rebase upstack (use after raw git commands). `--autostash` stashes/restores a dirty working tree around the rebase chain |
+| `gs restack [--all] [--autostash] [--continue|--abort]` | Rebase upstack across linked worktrees. Continue or abort from any worktree |
+| `gs status` | Show the active shared operation and its executor worktree |
 | `gs move --onto <branch>` | Reparent current branch onto a different target |
 | `gs insert <name> --between <parent> <child>` | Splice a new branch between an existing parent and child (validates `<child>` is currently stacked on `<parent>`) |
 | `gs split <commit> <new-name>` | Split branch at a commit — rest becomes a new child branch |
@@ -110,7 +117,9 @@ PR status badges: `[open]`, `[merged]`, `[closed]`. Dirty branches show a `*` ne
 
 `gs commit` auto-restacks for you. Use `gs restack` when you've used raw git commands (`git commit`, `git rebase`, `git amend`, etc.) and need to propagate changes manually.
 
-If a restack hits a conflict, resolve it, stage the files, then run `gs restack --continue`. This now correctly processes all siblings of the conflicted branch, not just the resolved one.
+If a restack hits a conflict, `gs` prints the executor worktree. Resolve and
+stage the files there. Then run `gs restack --continue` from any linked
+worktree. Use `gs restack --abort` to abort in the recorded executor.
 
 ## Tab completion
 

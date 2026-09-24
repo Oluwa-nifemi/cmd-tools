@@ -61,11 +61,70 @@ ensure_git_repo() {
 }
 
 git_dir() {
-  git rev-parse --git-dir
+  git rev-parse --absolute-git-dir
+}
+
+git_common_dir() {
+  git rev-parse --path-format=absolute --git-common-dir
+}
+
+atomic_write() {
+  local target="$1" value="$2" tmp
+  mkdir -p "$(dirname "$target")"
+  tmp="${target}.tmp.$$"
+  printf '%s\n' "$value" > "$tmp"
+  mv "$tmp" "$target"
+}
+
+metadata_dirs_match() {
+  diff -qr "$1" "$2" >/dev/null 2>&1
+}
+
+# Older gs versions used --git-dir, which placed metadata in each linked
+# worktree's private git directory. Move one consistent legacy copy into the
+# common git directory. Conflicting copies need a human decision.
+migrate_legacy_metadata() {
+  local common="$1" shared="$common/gs" legacy_dirs=() candidate d
+
+  if [[ -d "$common/worktrees" ]]; then
+    for d in "$common"/worktrees/*/gs; do
+      [[ -d "$d" ]] && legacy_dirs+=("$d")
+    done
+  fi
+
+  [[ ${#legacy_dirs[@]} -gt 0 ]] || return 0
+
+  if [[ -d "$shared" ]]; then
+    candidate="$shared"
+  else
+    candidate="${legacy_dirs[0]}"
+  fi
+
+  for d in "${legacy_dirs[@]}"; do
+    metadata_dirs_match "$candidate" "$d" ||
+      die "conflicting gs metadata found at '$candidate' and '$d'. Reconcile these directories before running gs."
+    [[ ! -e "${d}.migrated" ]] || die "cannot preserve legacy metadata because '${d}.migrated' already exists"
+  done
+
+  if [[ ! -d "$shared" ]]; then
+    local shared_tmp="${shared}.tmp.$$"
+    cp -R "${legacy_dirs[0]}" "$shared_tmp"
+    mv "$shared_tmp" "$shared"
+  fi
+
+  for d in "${legacy_dirs[@]}"; do
+    [[ -d "$d" ]] || continue
+    mv "$d" "${d}.migrated"
+  done
+
+  warn "migrated legacy worktree-local gs metadata to '$shared'"
 }
 
 gs_dir() {
-  echo "$(git_dir)/gs"
+  local common
+  common="$(git_common_dir)"
+  migrate_legacy_metadata "$common"
+  printf '%s\n' "$common/gs"
 }
 
 ensure_gs_init() {
@@ -109,11 +168,31 @@ get_parent() {
 
 set_parent() {
   # $1 = branch, $2 = parent
-  echo "$2" > "$(gs_dir)/branches/$(encode_branch "$1")"
+  atomic_write "$(gs_dir)/branches/$(encode_branch "$1")" "$2"
+}
+
+track_branch() {
+  local branch="$1" parent="$2" base
+  branch_exists "$branch" && branch_exists "$parent" || die "cannot track missing branch '$branch' or parent '$parent'"
+  base="$(git merge-base "$branch" "$parent" 2>/dev/null)" ||
+    die "branches '$branch' and '$parent' do not share history"
+  set_parent "$branch" "$parent"
+  set_base_oid "$branch" "$base"
 }
 
 remove_tracking() {
   rm -f "$(gs_dir)/branches/$(encode_branch "$1")"
+  rm -f "$(gs_dir)/bases/$(encode_branch "$1")"
+}
+
+get_base_oid() {
+  local f
+  f="$(gs_dir)/bases/$(encode_branch "$1")"
+  [[ -f "$f" ]] && cat "$f" || return 1
+}
+
+set_base_oid() {
+  atomic_write "$(gs_dir)/bases/$(encode_branch "$1")" "$2"
 }
 
 # Return all tracked children of a branch
@@ -184,8 +263,8 @@ cmd_init() {
     die "could not detect trunk branch. Use: gs init --trunk <branch>"
   fi
 
-  mkdir -p "$d/branches"
-  echo "$trunk" > "$d/config"
+  mkdir -p "$d/branches" "$d/bases"
+  atomic_write "$d/config" "$trunk"
   success "initialized gs with trunk branch '$trunk'"
 }
 
@@ -212,13 +291,13 @@ cmd_create() {
   parent="$(current_branch)"
 
   git checkout -b "$name" --quiet
-  set_parent "$name" "$parent"
+  track_branch "$name" "$parent"
 
   # Also track parent if it's not trunk and not yet tracked
   local trunk
   trunk="$(trunk_branch)"
   if [[ "$parent" != "$trunk" ]] && ! is_tracked "$parent"; then
-    set_parent "$parent" "$trunk"
+    track_branch "$parent" "$trunk"
     info "auto-tracked parent '$parent' onto '$trunk'"
   fi
 
@@ -260,7 +339,7 @@ cmd_track() {
 
   for b in "${branches[@]}"; do
     branch_exists "$b" || die "branch '$b' does not exist"
-    set_parent "$b" "$parent"
+    track_branch "$b" "$parent"
     info "tracked '$b' onto '$parent'"
     parent="$b"
   done
@@ -280,7 +359,7 @@ cmd_stack() {
 
   local cur
   cur="$(current_branch)"
-  set_parent "$branch" "$cur"
+  track_branch "$branch" "$cur"
   success "stacked '$branch' onto '$cur'"
 }
 
@@ -302,15 +381,8 @@ cmd_commit() {
 
   git commit "${args[@]}"
 
-  # Save the pre-commit tip (HEAD^) so restack_upstack has a reliable fork
-  # point for our children. Without this, the first level of recursion falls
-  # into the merge-base fallback, which can over-collect commits when our
-  # branch already had history rewritten upstream.
-  local cur tips_dir
+  local cur
   cur="$(current_branch)"
-  tips_dir="$(gs_dir)/old_tips"
-  mkdir -p "$tips_dir"
-  git rev-parse HEAD^ > "$tips_dir/$(encode_branch "$cur")" 2>/dev/null || true
 
   info "restacking upstack branches..."
   restack_upstack "$cur"
@@ -770,7 +842,7 @@ cmd_up() {
     fi
   done
 
-  git checkout "$cur" --quiet
+  checkout_navigation_target "$cur"
   success "switched to '$cur'"
 }
 
@@ -787,7 +859,7 @@ cmd_down() {
     cur="$parent"
   done
 
-  git checkout "$cur" --quiet
+  checkout_navigation_target "$cur"
   success "switched to '$cur'"
 }
 
@@ -814,7 +886,7 @@ cmd_top() {
     fi
   done
 
-  git checkout "$cur" --quiet
+  checkout_navigation_target "$cur"
   success "switched to '$cur' (top of stack)"
 }
 
@@ -839,7 +911,7 @@ cmd_bottom() {
     die "current branch is not part of a tracked stack"
   fi
 
-  git checkout "$cur" --quiet
+  checkout_navigation_target "$cur"
   success "switched to '$cur' (bottom of stack)"
 }
 
@@ -874,6 +946,7 @@ cmd_move() {
 
   # Update metadata
   set_parent "$cur" "$target"
+  set_base_oid "$cur" "$(git rev-parse "$target")"
 
   # Restack upstack
   info "restacking upstack branches..."
@@ -927,7 +1000,7 @@ cmd_insert() {
   # Create the new branch off parent, same as `gs create` would.
   git checkout "$parent" --quiet
   git checkout -b "$name" --quiet
-  set_parent "$name" "$parent"
+  track_branch "$name" "$parent"
 
   # Save child's pre-rebase tip so restack_upstack has a real fork point for
   # child's own descendants (same convention restack_upstack itself uses —
@@ -944,6 +1017,7 @@ cmd_insert() {
     die "rebase failed — resolve conflicts, run 'git rebase --continue', then 'gs restack --all' to fix up metadata and descendants"
   }
   set_parent "$child" "$name"
+  set_base_oid "$child" "$(git rev-parse "$name")"
 
   info "restacking descendants of '$child'..."
   restack_upstack "$child"
@@ -1002,19 +1076,21 @@ cmd_fold() {
 
   [[ "$parent" == "$trunk" ]] && [[ "$cur" == "$trunk" ]] && die "cannot fold trunk"
 
-  # Reparent children to the parent
   local children
   children="$(get_children "$cur")"
-  for child in $children; do
-    set_parent "$child" "$parent"
-    info "reparented '$child' to '$parent'"
-  done
 
   # Switch to parent and merge current branch
   git checkout "$parent" --quiet
   info "merging '$cur' into '$parent'..."
   git merge --squash "$cur" --quiet
   if git commit --no-edit --quiet 2>/dev/null; then
+    # Keep each child's recorded fork at the folded branch's old tip until
+    # restack succeeds. Only the parent name changes at this point.
+    for child in $children; do
+      set_parent "$child" "$parent"
+      info "reparented '$child' to '$parent'"
+    done
+
     # Only delete if the commit succeeded
     git branch -D "$cur" --quiet 2>/dev/null
     remove_tracking "$cur"
@@ -1056,14 +1132,16 @@ cmd_split() {
   local children
   children="$(get_children "$cur")"
 
-  # Create new branch at HEAD, then reset current branch to split point
+  # Create the Git branch and reset first. Metadata changes only after both
+  # Git operations succeed.
   git branch "$new_name" HEAD --quiet
-  set_parent "$new_name" "$cur"
   git reset --hard "$commit" --quiet
+  track_branch "$new_name" "$cur"
 
   # Reparent former children to the new branch (it's now the tip)
   for child in $children; do
     set_parent "$child" "$new_name"
+    set_base_oid "$child" "$(git rev-parse "$new_name")"
     info "reparented '$child' to '$new_name'"
   done
 
@@ -1599,9 +1677,11 @@ cmd_rename() {
 
   # Update gs tracking: transfer parent to new name
   if is_tracked "$cur"; then
-    local parent
+    local parent old_base
     parent="$(get_parent "$cur")"
+    old_base="$(get_base_oid "$cur" 2>/dev/null || true)"
     set_parent "$new_name" "$parent"
+    [[ -n "$old_base" ]] && set_base_oid "$new_name" "$old_base"
     remove_tracking "$cur"
   fi
 
@@ -1640,8 +1720,9 @@ Commands:
   track <b1> [b2] ...     Track existing branches as a stack
   stack <branch>          Add a branch on top of the current one
   commit [-a] [-m msg]    Commit and auto-restack upstack
-  restack [--all] [--autostash] [--continue]
+  restack [--all] [--autostash] [--continue|--abort]
                           Rebase upstack branches (or entire stack)
+  status                  Show the active shared gs operation
   ls / list [--pr]        Show the stack tree (--pr fetches PR status)
   log [--pr]              Show stack tree with commit messages (--pr fetches PR status)
   up [N]                  Move up to child branch
@@ -1668,6 +1749,12 @@ HELP
 
 # ── Main dispatch ───────────────────────────────────────────────────────────
 
+# Load the shared worktree engine after the legacy definitions so these
+# functions replace the old single-worktree implementations.
+GS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=gs-worktree.sh
+source "$GS_SCRIPT_DIR/gs-worktree.sh"
+
 main() {
   local cmd="${1:-help}"
   shift 2>/dev/null || true
@@ -1679,6 +1766,9 @@ main() {
     shift 2>/dev/null || true
   fi
 
+  guard_command_against_active_operation "$cmd" "${1:-}"
+  acquire_mutation_lock "$cmd"
+
   case "$cmd" in
     init)     cmd_init "$@" ;;
     create)   cmd_create "$@" ;;
@@ -1686,6 +1776,7 @@ main() {
     stack)    cmd_stack "$@" ;;
     commit)   cmd_commit "$@" ;;
     restack)  cmd_restack "$@" ;;
+    status)   cmd_status "$@" ;;
     ls|list)  cmd_ls "$@" ;;
     log)      cmd_log "$@" ;;
     up)       cmd_up "$@" ;;
