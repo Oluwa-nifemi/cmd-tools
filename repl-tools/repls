@@ -1,9 +1,12 @@
 #!/bin/sh
 set -eu
 
-registry="${HOME}/.cache/zed-clojure-repl/registry.json"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$SCRIPT_DIR/repl-lib.sh"
+prune_registry
+registry="$REPL_REGISTRY"
 
-python3 - "$registry" <<'PY'
+python3 - "$registry" "$REPL_MAX" <<'PY'
 import json
 import os
 import concurrent.futures
@@ -87,8 +90,7 @@ dim = "\033[2m" if sys.stdout.isatty() else ""
 bold = "\033[1m" if sys.stdout.isatty() else ""
 off = "\033[0m" if sys.stdout.isatty() else ""
 
-# The LRU cap lives in nrepl_registry.rs; keep this in sync if it changes.
-MAX_REPLS = 4
+MAX_REPLS = int(sys.argv[2])
 
 count = len(ordered)
 

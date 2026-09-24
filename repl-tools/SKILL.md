@@ -33,6 +33,14 @@ confirmation. When this happens, send the expression again in a second call.
 process. If you see that message and no evaluation result, retry the same
 expression.
 
+## Automatic cleanup
+
+`startrepl`, `runrepl` and `repls` stop a REPL when its worktree folder is
+deleted or it has been idle for 24 hours (`ZED_CLOJURE_REPL_IDLE_SECONDS`).
+Starting a REPL also evicts the least recently used one at the cap of 3
+(`ZED_CLOJURE_MAX_REPLS`), like the editor. A REPL serving an app on a
+non-loopback port is never stopped by idleness or the cap.
+
 ## Test workflow
 
 Before running Clojure tests, reload both the changed source namespace and
@@ -95,3 +103,11 @@ When a project REPL is stale, disconnected, or unresponsive, do not waste
 time debugging that session. Kill it with `killrepl`, start a clean one with
 `startrepl`, reload the required namespaces, and retry once. If the fresh
 REPL also fails, report the concrete failure.
+
+Starting a REPL takes up to 120s. Let the invocation that started it finish.
+Do not run a second `startrepl` or `runrepl` for the same project while it is
+running. A second caller waits on the startup lock for the same 120s
+(`ZED_CLOJURE_REPL_LOCK_WAIT_SECONDS`), then fails with the lock path and
+owner PID. If startup or the lock wait times out, run `killrepl` for that
+project, run `startrepl` once, reload the namespaces, and retry once. If that
+also fails, report the error and stop.

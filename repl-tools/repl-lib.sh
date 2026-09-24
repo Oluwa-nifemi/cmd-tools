@@ -7,6 +7,136 @@ REPL_REGISTRY="${REPL_CACHE_DIR}/registry.json"
 REPL_LOCK_DIR="${REPL_CACHE_DIR}/locks"
 REPL_START_TIMEOUT=120
 REPL_EVAL_TIMEOUT=10
+# How long a caller waits on another process's startup lock before failing,
+# and how long an ownerless lock (starter died before writing its PID) may
+# exist before we treat it as abandoned.
+REPL_LOCK_WAIT_TIMEOUT="${ZED_CLOJURE_REPL_LOCK_WAIT_SECONDS:-$REPL_START_TIMEOUT}"
+REPL_EMPTY_LOCK_GRACE="${ZED_CLOJURE_REPL_EMPTY_LOCK_GRACE_SECONDS:-2}"
+REPL_MAX="${ZED_CLOJURE_MAX_REPLS:-3}"
+REPL_IDLE_TIMEOUT="${ZED_CLOJURE_REPL_IDLE_SECONDS:-86400}"
+
+# Stops REPLs that should no longer hold memory: the worktree folder is gone,
+# or it has been idle past REPL_IDLE_TIMEOUT. Dead entries are dropped. With
+# MODE=reserve it also evicts least-recently-used REPLs until one more fits
+# under REPL_MAX, matching enforce_limit in the editor. A REPL serving an app
+# on a non-loopback port is never stopped for idleness or the cap, and KEEP
+# (the worktree being used right now) is never stopped for idleness.
+prune_registry() {
+    python3 - "$REPL_REGISTRY" "${1:-prune}" "${2:-}" "$REPL_MAX" "$REPL_IDLE_TIMEOUT" <<'PY'
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+path, mode, keep, max_repls, idle_timeout = sys.argv[1:]
+try:
+    max_repls = max(int(max_repls), 1)
+except ValueError:
+    max_repls = 3
+idle_timeout = int(idle_timeout)
+
+try:
+    with open(path) as handle:
+        registry = json.load(handle)
+except FileNotFoundError:
+    raise SystemExit(0)
+except (OSError, json.JSONDecodeError) as error:
+    print(f"repl-tools: cannot read nREPL registry: {error}", file=sys.stderr)
+    raise SystemExit(0)
+
+entries = registry.get("worktrees", {})
+hook = os.path.expanduser("~/.config/zed-clojure/on-repl-evicted")
+
+
+def port_answers(port):
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), 0.25):
+            return True
+    except ConnectionRefusedError:
+        return False
+    except OSError:
+        return True
+
+
+def alive(entry):
+    try:
+        os.kill(int(entry["pid"]), 0)
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    return port_answers(entry.get("port", 0))
+
+
+def serves_app(entry):
+    # nREPL binds loopback; a dev system's HTTP server binds all interfaces.
+    try:
+        output = subprocess.run(
+            ["lsof", "-nP", "-a", "-g", str(os.getpgid(int(entry["pid"]))),
+             "-iTCP", "-sTCP:LISTEN", "-Fn"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return True
+    names = [line[1:] for line in output.splitlines() if line.startswith("n")]
+    return any(not name.startswith(("127.0.0.1:", "[::1]:", "localhost:")) for name in names)
+
+
+def stop(worktree, entry, reason):
+    pid = int(entry["pid"])
+    try:
+        group = os.getpgid(pid)
+        os.killpg(group, signal.SIGTERM)
+        for _ in range(20):
+            time.sleep(0.1)
+            os.killpg(group, 0)
+        os.killpg(group, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        os.remove(os.path.join(worktree, ".nrepl-port"))
+    except OSError:
+        pass
+    name = worktree.rstrip("/").rsplit("/", 1)[-1]
+    print(f"stopped REPL for {name} (pid {pid}): {reason}", file=sys.stderr)
+    if os.access(hook, os.X_OK):
+        subprocess.Popen([hook, "evicted", worktree], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+now = time.time()
+live = {}
+for worktree, entry in entries.items():
+    if not alive(entry):
+        continue
+    if not os.path.isdir(worktree):
+        stop(worktree, entry, "worktree folder was deleted")
+        continue
+    idle = now - entry.get("last_used_at", 0)
+    if worktree != keep and idle > idle_timeout and not serves_app(entry):
+        stop(worktree, entry, f"idle for {int(idle // 3600)}h")
+        continue
+    live[worktree] = entry
+
+if mode == "reserve":
+    candidates = sorted(
+        (item for item in live.items() if item[0] != keep and not serves_app(item[1])),
+        key=lambda item: item[1].get("last_used_at", 0),
+    )
+    while len(live) >= max_repls and candidates:
+        worktree, entry = candidates.pop(0)
+        stop(worktree, entry, f"at the {max_repls}-REPL limit, least recently used")
+        del live[worktree]
+
+if live != entries:
+    registry["worktrees"] = live
+    with open(path, "w") as handle:
+        json.dump(registry, handle, indent=2)
+        handle.write("\n")
+PY
+}
 
 resolve_project_root() {
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -391,6 +521,7 @@ PY
 
 start_repl() {
     root="$1"
+    prune_registry prune "$root"
     existing_port="$(registry_port "$root")"
     if [ -n "$existing_port" ]; then
         printf '%s\n' "$existing_port"
@@ -400,12 +531,34 @@ start_repl() {
     lock_path="$(lock_path_for "$root")"
     mkdir -p "$REPL_LOCK_DIR"
     announced_wait=false
+    wait_started="$(date +%s)"
+    ownerless_since=
     while ! mkdir "$lock_path" 2>/dev/null; do
+        now="$(date +%s)"
         lock_pid="$(cat "$lock_path/pid" 2>/dev/null || true)"
         if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
             rm -f "$lock_path/pid"
             rmdir "$lock_path" 2>/dev/null || true
             continue
+        fi
+        # The owner writes its PID right after mkdir. A lock that stays empty
+        # past the grace period belongs to a starter that died in between.
+        # rmdir only succeeds on an empty directory, so a late PID write wins.
+        if [ -z "$lock_pid" ]; then
+            ownerless_since="${ownerless_since:-$now}"
+            if [ $((now - ownerless_since)) -ge "$REPL_EMPTY_LOCK_GRACE" ]; then
+                rmdir "$lock_path" 2>/dev/null || true
+                ownerless_since=
+                continue
+            fi
+        else
+            ownerless_since=
+        fi
+        # A live owner may be a slow but valid startup in another terminal, so
+        # never kill it here. Fail with enough detail to run killrepl instead.
+        if [ $((now - wait_started)) -ge "$REPL_LOCK_WAIT_TIMEOUT" ]; then
+            echo "runrepl: timed out after ${REPL_LOCK_WAIT_TIMEOUT}s waiting for REPL startup lock for $root; lock=$lock_path owner-pid=${lock_pid:-unknown}" >&2
+            return 1
         fi
         if [ "$announced_wait" = false ]; then
             echo "waiting for another process to start REPL for $(basename "$root")" >&2
@@ -437,6 +590,7 @@ start_repl() {
     # JVM and make us evaluate a server that no longer exists. The registry
     # check above proved no live REPL owns this worktree, so this file is stale.
     rm -f "$root/.nrepl-port"
+    prune_registry reserve "$root"
 
     set -- $(project_command "$root")
     program="$1"
