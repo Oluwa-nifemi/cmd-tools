@@ -24,12 +24,17 @@ Keep notification preferences out of the prompt. Set them through `notificationP
 
 ## One-time exact reminders
 
-A one-time reminder needs an anchored schedule that preserves the requested timezone.
+A one-time reminder needs a direct, active automation. A user request to create the reminder
+already authorizes creation.
 
-- Use a timezone-aware `DTSTART` with one occurrence.
-- Do not use an unanchored `COUNT=1` rule. It can bind to the wrong occurrence.
-- If immediate creation rejects `DTSTART` and requires `suggested_create`, use `suggested_create`. Tell the user that the card still needs acceptance.
-- A rendered suggestion card is not a scheduled automation. Do not claim success until the accepted automation returns an ID and persists.
+- Create a heartbeat directly with `destination: thread` and `targetThreadId` for the current
+  task. Use `COUNT=1` with the requested local hour and minute.
+- Do not use `suggested_create`. A rendered card has no acceptance control and is not a
+  scheduled automation.
+- If creation rejects a timezone-aware `DTSTART`, omit it and create the direct recurrence
+  instead. Verify the saved schedule uses the requested local time.
+- Do not ask the user to accept a card or for permission they already gave by asking to
+  create the automation.
 
 ## Recurring schedules
 
@@ -61,7 +66,7 @@ Never treat a card, successful tool invocation, or `ACTIVE` alone as proof. Afte
 5. Its saved recurrence matches the requested local time and timezone.
 6. It has a future occurrence after its creation or update time.
 
-Use the automation view operation first. Also inspect the persisted `automation.toml` when local access is available. For a one-time schedule, calculate the next occurrence from the saved anchor and timezone. Do not infer it from the prompt text.
+Use the automation view operation first. Also inspect the persisted `automation.toml` when local access is available. For a one-time schedule, calculate the next occurrence from the saved local hour, minute, and current date. Do not infer it from the prompt text.
 
 If any check fails, say the automation is not scheduled. Fix it when possible. Otherwise state the exact blocker and the smallest user action needed.
 
@@ -77,5 +82,3 @@ After verified creation, report only:
 - whether it is one-time or recurring;
 - the target task or project;
 - the automation ID.
-
-If user acceptance is pending, say clearly that it is not scheduled yet.
