@@ -23,7 +23,7 @@ class VerifyTests(unittest.TestCase):
             output = Path(directory) / "page.html"
             output.write_text(portrait)
             with self.assertRaisesRegex(ValueError, "landscape PDF orientation"):
-                MODULE.verify("page", output)
+                MODULE.lint("page", output)
 
     def test_page_requires_section_pagination_and_export_links(self) -> None:
         missing_exports = """<!doctype html><html><head><base target="_blank">
@@ -35,7 +35,7 @@ class VerifyTests(unittest.TestCase):
             output = Path(directory) / "page.html"
             output.write_text(missing_exports)
             with self.assertRaisesRegex(ValueError, "section-pdf-link"):
-                MODULE.verify("page", output)
+                MODULE.lint("page", output)
 
     def test_rejects_template_instructions_exposed_by_malformed_comment(self) -> None:
         malformed = """<!doctype html>
@@ -50,7 +50,7 @@ HOW TO USE: replace everything between START and END -->
             output = Path(directory) / "deck.html"
             output.write_text(malformed)
             with self.assertRaisesRegex(ValueError, "browser-visible template instructions"):
-                MODULE.verify("deck", output)
+                MODULE.lint("deck", output)
 
     def test_rejects_duplicate_html_documents(self) -> None:
         duplicate = """<!doctype html><html><head><base target="_blank">
@@ -63,7 +63,35 @@ HOW TO USE: replace everything between START and END -->
             output = Path(directory) / "deck.html"
             output.write_text(duplicate)
             with self.assertRaisesRegex(ValueError, "exactly one <html>"):
-                MODULE.verify("deck", output)
+                MODULE.lint("deck", output)
+
+    def test_rejects_legacy_details_in_decks(self) -> None:
+        deck = """<!doctype html><html><head><base target="_blank">
+<style>@media print {}</style></head><body>
+<section class="slide cover"><details><summary>More</summary></details></section>
+<button id="export-btn"></button>
+<script>window.location.hash; addEventListener('hashchange', () => {});</script>
+</body></html>"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deck.html"
+            output.write_text(deck)
+            with self.assertRaisesRegex(ValueError, "must not use details"):
+                MODULE.lint("deck", output)
+
+    def test_rejects_duplicate_ids(self) -> None:
+        deck = """<!doctype html><html><head><base target="_blank">
+<style>@media print {}</style></head><body>
+<section class="slide cover"><p id="same"></p><p id="same"></p></section>
+<button id="export-btn"></button>
+<script>window.location.hash; addEventListener('hashchange', () => {});</script>
+</body></html>"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deck.html"
+            output.write_text(deck)
+            with self.assertRaisesRegex(ValueError, "duplicates: same"):
+                MODULE.lint("deck", output)
 
 
 class ExportTests(unittest.TestCase):
@@ -75,23 +103,25 @@ class ExportTests(unittest.TestCase):
             (Path("/tmp/review-sections.pdf"), Path("/tmp/review-long.png")),
         )
 
-    @patch.object(MODULE, "verify")
+    @patch.object(MODULE, "lint")
     @patch.object(MODULE, "chrome_executable", return_value="/chrome")
     @patch.object(MODULE.shutil, "which", return_value="/agent-browser")
+    @patch.object(MODULE, "run_browser", side_effect=["2", "", ""])
     @patch.object(MODULE.subprocess, "run")
     def test_export_page_generates_pdf_and_full_height_png(
         self,
         run: Mock,
+        run_browser: Mock,
         _which: Mock,
         _chrome: Mock,
-        verify: Mock,
+        lint: Mock,
     ) -> None:
         output = Path("/tmp/review.html")
         page_url = output.resolve().as_uri()
 
         MODULE.export_page(output)
 
-        verify.assert_called_once_with("page", output)
+        lint.assert_called_once_with("page", output)
         self.assertEqual(
             run.call_args_list,
             [
@@ -111,7 +141,7 @@ class ExportTests(unittest.TestCase):
                     check=True,
                 ),
                 call(
-                    ["/agent-browser", "--session", "presentation-export-review", "set", "viewport", "1440", "1100"],
+                    ["/agent-browser", "--session", "presentation-export-review", "set", "viewport", "1440", "1100", "2"],
                     check=True,
                 ),
                 call(
@@ -136,11 +166,20 @@ class ExportTests(unittest.TestCase):
                     check=True,
                 ),
                 call(
+                    ["/agent-browser", "--session", "presentation-export-review", "screenshot", "/tmp/review-section-images/section-01.png"],
+                    check=True,
+                ),
+                call(
+                    ["/agent-browser", "--session", "presentation-export-review", "screenshot", "/tmp/review-section-images/section-02.png"],
+                    check=True,
+                ),
+                call(
                     ["/agent-browser", "--session", "presentation-export-review", "close"],
                     check=False,
                 ),
             ],
         )
+        self.assertEqual(run_browser.call_count, 3)
 
 
 if __name__ == "__main__":

@@ -13,9 +13,13 @@ region between the template markers.
 - Use tables only for real comparisons with shared dimensions.
 - Use cards only for independent items, not sequential instructions.
 - Prefer a short text or labelled flow for a simple procedure.
-- Use `<details class="fold">` only for long, optional appendix material.
-- PDF export uses A4 landscape orientation and starts each top-level section
-  on a new page. Oversized sections may continue naturally rather than clip.
-- The export helper also creates a full-height PNG of the screen layout.
+- Keep optional appendix material visible or place it in a clearly labelled
+  modal. Do not use `<details>` or generic “more” labels.
+- Apply the same metric rule as decks: measurement, baseline, change, and why
+  it matters must appear together.
+- Pills and badges must stay on one line. Give their table column enough width;
+  do not let a short status label wrap into a tall, hard-to-read capsule.
+- In explanatory cards, render the label as its own block above the body. Do
+  not concatenate labels such as “Method” or “Output” directly with prose.
 - Preserve the template's print stylesheet and both download links.
 - Do not alter the inline TOC, comments, export controls, or print stylesheet.

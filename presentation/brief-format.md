@@ -6,7 +6,7 @@ This is the contract between a calling skill and the `presentation` skill. The c
 
 **The agent that renders MUST read the presentation SKILL.md in full before
 writing a single line of HTML.** That file contains the mandatory invariants,
-the default aesthetic, the progressive-disclosure pattern, code modal
+the default aesthetic, visible-content rules, modal
 architecture, navigation rules, and the verification grep. Skipping it leads
 to broken decks (this has happened — the invariants exist because of past
 failures).
@@ -51,16 +51,16 @@ failures).
 ## Slide outline
 <ordered list. Each slide is a `### Slide:` heading with these sub-fields:>
 <- Source: where content comes from. Either "inline" or absolute file path(s)>
-<- Collapsed content: bullets / short prose for the slide face>
-<- Expanded content: what appears in the ▸ Details panel; "none" or "n/a" if no expansion>
+<- Visible content: all content needed to understand the slide>
+<- Modal content: optional dense evidence; "none" or "n/a" if absent>
 <- Notes (optional): per-slide rendering hints>
 
 ### Slide: <slide title>
 Source: <inline | path/to/file.md>
-Collapsed content:
+Visible content:
 - Bullet 1
 - Bullet 2
-Expanded content:
+Modal content:
 - More detail point 1
 - Source link: [Issue #1234](https://...)
 Notes: <optional>
@@ -103,39 +103,39 @@ What we shipped, what bit us, what we'll change
 
 ### Slide: Goals
 Source: inline
-Collapsed content:
+Visible content:
 - Land the new auth flow behind a flag
 - Reduce p99 latency on /search to <300ms
 - Onboard two new engineers
-Expanded content: none
+Modal content: none
 
 ### Slide: What went well
 Source: inline
-Collapsed content:
+Visible content:
 - Auth flow shipped on time, zero rollbacks
 - New engineers both have first PRs merged
 - Pairing on Wednesdays is sticking
-Expanded content:
+Modal content:
 - Auth: flag is at 5%, no incidents reported
 - New eng onboarding doc was rewritten before they joined — paid off
 
 ### Slide: What didn't
 Source: inline
-Collapsed content:
+Visible content:
 - /search p99 still at 480ms
 - Two incidents from the deploy pipeline (slow rollouts)
 - Sprint planning ran 90 minutes
-Expanded content:
+Modal content:
 - /search: identified the N+1 in `searchClusters`, fix in flight
 - Pipeline: argo timeout config wrong, will be PR'd next sprint
 
 ### Slide: Action items
 Source: inline
-Collapsed content:
+Visible content:
 - Land /search N+1 fix (owner: A)
 - Argo timeout config PR (owner: B)
 - Cap sprint planning at 60min via timer (owner: C)
-Expanded content: none
+Modal content: none
 
 ## Source files to read
 (none — all content inline)
@@ -170,44 +170,44 @@ What we found, what we decided, what to do next
 
 ### Slide: Cover
 Source: inline (use Title, Subtitle, Cover metadata above)
-Collapsed content: (cover-slide rendering)
-Expanded content: none
+Visible content: (cover-slide rendering)
+Modal content: none
 
 ### Slide: Where we landed
 Source: /Users/me/work/myproj/local/litellm-context-management_research/research-notes.md (the "Outcome at a glance → After" section if present, else the Decisions table summary)
-Collapsed content: <distill into 5-7 bullets summarising the wins>
-Expanded content: <pointer to research-notes.md, key decision links>
+Visible content: <distill into 5-7 bullets summarising the wins>
+Modal content: <pointer to research-notes.md, key decision links>
 
 ### Slide: Before
 Source: /Users/me/work/myproj/local/litellm-context-management_research/research-notes.md (the "Outcome at a glance → Before" section)
-Collapsed content: <verbatim from Before section>
-Expanded content: <none — Before should be stark>
+Visible content: <verbatim from Before section>
+Modal content: <none — Before should be stark>
 
 ### Slide: What we found
 Source: research-notes.md
-Collapsed content: <constraints that ruled out simpler paths>
-Expanded content: <links to step files where each constraint was discovered>
+Visible content: <constraints that ruled out simpler paths>
+Modal content: <links to step files where each constraint was discovered>
 
 ### Slide: Open questions
 Source: research-notes.md "Open questions" section
-Collapsed content: <each open question as a bullet>
-Expanded content: <context for each>
+Visible content: <each open question as a bullet>
+Modal content: <context for each>
 Notes: omit slide entirely if Open questions section is empty
 
 ### Slide: Next steps
 Source: research-notes.md "Next steps" section
-Collapsed content: <prioritized list>
-Expanded content: <none>
+Visible content: <prioritized list>
+Modal content: <none>
 
 ### Slide: Section divider — The arc (deep dive)
 Source: inline
-Collapsed content: large heading "The arc (deep dive)" with subtext "stop here if you don't need the chronology"
-Expanded content: none
+Visible content: large heading "The arc (deep dive)" with subtext "stop here if you don't need the chronology"
+Modal content: none
 
 ### Slide: Step 1 — <title from steps/step-1-*.md>
 Source: /Users/me/work/myproj/local/litellm-context-management_research/steps/step-1-litellm.md
-Collapsed content: <step Summary section + Decision line>
-Expanded content: <step body>
+Visible content: <step Summary section + Decision line>
+Modal content: <step body>
 Notes: if step contains **Reframe**, apply amber left-border
 
 ### Slide: Step 2 — ...
@@ -215,19 +215,19 @@ Notes: if step contains **Reframe**, apply amber left-border
 
 ### Slide: Section divider — Decisions
 Source: inline
-Collapsed content: large heading "Decisions"
-Expanded content: none
+Visible content: large heading "Decisions"
+Modal content: none
 
 ### Slide: Decisions
 Source: research-notes.md "Decisions and rejected alternatives" table
-Collapsed content: <render the table — split across multiple slides if it doesn't fit on one>
-Expanded content: <none — the table is the content>
+Visible content: <render the table — split across multiple slides if it doesn't fit on one>
+Modal content: <none — the table is the content>
 Notes: the "why rejected" column is the focal point; visually emphasize it
 
 ### Slide: Files reference / closing
 Source: research-notes.md "Quick reference" section
-Collapsed content: <files investigated>
-Expanded content: <none>
+Visible content: <files investigated>
+Modal content: <none>
 
 ## Source files to read
 - /Users/me/work/myproj/local/litellm-context-management_research/research-notes.md
@@ -260,41 +260,41 @@ The shape of the system — for new joiners
 
 ### Slide: Overview
 Source: inline
-Collapsed content:
+Visible content:
 - 3 layers: HTTP routing → domain services → persistence
 - Entry point: src/main.py
 - ~12k lines, 4 bounded contexts (workspaces, components, integrations, auth)
-Expanded content:
+Modal content:
 - Tech stack: FastAPI, SQLAlchemy, Pydantic v2
 - Test infrastructure: pytest + factories
 
 ### Slide: HTTP layer
 Source: /Users/me/work/api/src/routes/
-Collapsed content:
+Visible content:
 - FastAPI routers, one file per bounded context
 - Auth middleware: src/middleware/auth.py
 - Error handlers: src/middleware/errors.py
-Expanded content:
+Modal content:
 - Route registration pattern
 - Response model conventions
 
 ### Slide: Domain layer — Workspaces
 Source: /Users/me/work/api/src/domain/workspaces.py /Users/me/work/api/src/domain/workspace_commands.py
-Collapsed content:
+Visible content:
 - Aggregate root: Workspace
 - Commands: CreateWorkspace, ArchiveWorkspace, AddMember
 - Queries: list_workspaces, get_workspace_by_id
-Expanded content:
+Modal content:
 - CQRS split is loose; queries live in same file as aggregate
 - Authorization checked at command level, not route level
 
 ### Slide: Persistence
 Source: /Users/me/work/api/src/persistence/
-Collapsed content:
+Visible content:
 - SQLAlchemy ORM, migrations via Alembic
 - Repositories per aggregate
 - No raw SQL except in 2 reporting queries
-Expanded content:
+Modal content:
 - Connection pooling: SQLAlchemy default + asyncpg
 - Migration runbook: docs/migrations.md
 
@@ -317,7 +317,7 @@ Expanded content:
 - **Preserve mechanism detail, not conversation length.** If the source discussion resolved how an important mechanism works, carry that clarification into the brief. Do not copy the full discussion.
 - **Use concrete examples for transformations.** When data or state changes form, include the input, output, or short sequence the reader needs. Keep the example beside the claim it explains.
 - **Split different flows.** If concepts have different actors or mechanics, prefer separate slides or sections over one compressed comparison.
-- **Source files are reading material, not authoritative.** The slide outline tells the sub-agent what to render; source files let it fact-check. If a slide's "Collapsed content" is fully written out in the brief, the sub-agent uses that verbatim. If it's a directive ("distill the Wins section into 5 bullets"), the sub-agent reads the source and produces the bullets.
+- **Source files are reading material, not authoritative.** The slide outline tells the sub-agent what to render; source files let it fact-check. If a slide's "Visible content" is fully written out in the brief, the sub-agent uses that verbatim. If it's a directive ("distill the Wins section into 5 bullets"), the sub-agent reads the source and produces the bullets.
 - **Never mark a slide "Source: inline" when the content came from research, sub-agent findings, or codebase exploration you didn't personally author from scratch.** "Inline" means "I am hand-writing this content, there is nothing upstream to check it against" — it is correct for a sprint retro or a brief where the caller *is* the source. It is a lossiness trap when the caller is actually compressing findings from elsewhere: the render agent never sees the raw material, can't fact-check the summary, can't pull back a dropped detail (a file:line ref, a specific test name, a rejected alternative), and the deck becomes a copy of a copy with no way to audit it later.
   - Before composing the brief, **write the raw findings to a plain notes file** (e.g. `<output-dir>/research-notes.md`) — the sub-agent reports, the file/line references, the specifics you're about to compress out. This is a few minutes of transcription, not a research pass; you already have the material.
   - Then in the brief, set each such slide's `Source:` to that notes file's path (plus a pointer to the relevant section), and list it under `## Source files to read`. The render agent reads it and can restore detail the brief's bullets dropped, verify a claim before putting it on a slide, and — if asked to make a slide more specific — has somewhere to go.

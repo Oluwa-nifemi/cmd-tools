@@ -3,7 +3,7 @@
 The brief already defines the audience, purpose, format, sources, and output
 path. Do not reopen those decisions.
 
-Run the initializer before editing:
+For a new artifact, run the initializer before editing:
 
 ```bash
 python3 scripts/presentation_artifact.py init \
@@ -11,7 +11,7 @@ python3 scripts/presentation_artifact.py init \
   --output <path>
 ```
 
-If an output exists, the initializer copies it to a timestamped file in
+If an output exists during a new render, the initializer copies it to a timestamped file in
 `.presentation-backups/` beside the output. It does not read or merge that
 backup. It then creates a fresh artifact from the selected template.
 
@@ -22,16 +22,8 @@ Read these files in this order:
    `format: page`.
 3. [verification.md](verification.md) after rendering.
 
+For feedback revisions, do not run the initializer. Read the exact target HTML
+immediately before editing and make only the requested changes.
+
 Edit only the template's designated content region. Do not rewrite its CSS,
 JavaScript, navigation, commenting, or print chrome.
-
-After verification, page artifacts must also be exported:
-
-```bash
-python3 scripts/presentation_artifact.py export \
-  --format page \
-  --output <path>
-```
-
-Inspect the generated section-per-page PDF and full-height PNG. Check every PDF
-page because pagination problems can affect only one section.

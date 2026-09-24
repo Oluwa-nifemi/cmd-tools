@@ -12,7 +12,9 @@ description: Build a self-contained HTML deck or one-page presentation. Use when
    check that the brief preserves important mechanism detail from the source.
    Keep it lean by replacing vague summaries with concrete examples or
    labelled flows, not by adding more prose.
-2. **Render** — dispatch exactly one sub-agent. You MUST include this line in
+2. **Render** — dispatch exactly one renderer sub-agent. The main assistant
+   gathers requirements and reviews evidence; it does not edit the artifact
+   unless the user explicitly asks it to. You MUST include this line in
    the sub-agent prompt:
 
    > You are the renderer. Read the renderer guide and render the deck
@@ -26,20 +28,21 @@ description: Build a self-contained HTML deck or one-page presentation. Use when
      --format <deck|page> \
      --output <path>
    # Edit the initialized artifact per the brief and renderer guide.
-   python3 scripts/presentation_artifact.py verify \
+   python3 scripts/presentation_artifact.py lint \
      --format <deck|page> \
      --output <path>
-   python3 scripts/presentation_artifact.py export \
-     --format page \
+   python3 scripts/presentation_artifact.py verify \
+     --format <deck|page> \
      --output <path>
    ```
 
    Do not read the script or either template file. The initializer selects
    the template and backs up an existing output automatically.
-   For page format, the export command creates sibling `*-sections.pdf` and
-   `*-long.png` files. The PDF uses A4 landscape and starts each top-level
-   section on a new page. An oversized section may continue onto another page.
-3. **Report** the completed HTML, both page exports, and verification results.
+   `lint` checks source structure. `verify` opens the artifact with
+   `agent-browser`, checks rendered geometry and interactions, and writes a
+   verification bundle beside the artifact. Both must pass.
+3. **Report** the completed HTML, lint result, browser verification result,
+   and verification bundle. Never call an artifact verified after lint alone.
 
 ## Feedback revisions
 
@@ -52,9 +55,14 @@ Do not create a new brief for a small feedback pass. Update the brief only when
 the requested change alters the artifact's purpose, structure, or source of
 truth. Start a new renderer only when the previous renderer cannot be resumed.
 
-The resumed renderer must apply the requested edits, run the deterministic
-verification, and inspect the changed sections itself. Do not dispatch a second
-agent only to review its work.
+Before editing, turn every user comment into a numbered checklist mapped to an
+exact slide and element. Read the exact target HTML immediately before each
+edit. Preserve accepted slides and change only checklist targets unless a
+sequencing change requires adjacent edits. Do not run `init` during a revision.
+
+The resumed renderer must run `lint` and `verify`, inspect the generated contact
+sheet and flagged screenshots, and report each checklist item as passed or
+unresolved. Do not dispatch a second agent only to review its work.
 
 ## Calling-skill contract
 

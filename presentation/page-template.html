@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   ============================================================================
-  PAGE TEMPLATE — correct-by-construction one-page skeleton.
+  PAGE TEMPLATE — stable one-page HTML skeleton.
 
   This is the PAGE format (deck's sibling): a single scrollable document meant
   to be read at the reader's own pace, not presented live. No slides, no hash
@@ -23,9 +23,6 @@
       "why/how"/caveat that USED to be buried in a nested dropdown), .statgrid
       /.stat cards for key numbers, .pill status labels, and plain tables — use
       these instead of paragraphs, and instead of collapsing content away
-    - <details class="fold"> is the ONE remaining opt-in collapse, reserved for
-      genuinely long, genuinely optional appendix-grade material (a raw dump, a
-      full transcript). Default to NOT using it. Never nest a fold in a fold.
     - @media print stylesheet that starts each top-level section on a new A4
       landscape page and lets oversized sections continue without clipping
     - download links for the section-per-page PDF and full-height PNG generated
@@ -46,16 +43,13 @@
          <aside class="callout"><b>Why:</b> ...</aside>            (neutral)
          <aside class="callout callout-accent">...</aside>          (good/decision)
          <aside class="callout callout-warn">...</aside>            (caveat/pivot)
-       Only reach for <details class="fold"> when the material is long AND
-       optional (an appendix). If in doubt, leave it expanded as a callout.
     4. Do NOT rewrite the CSS. Only override :root tokens if the brief's
        "Aesthetic overrides" says so — and if you do, consider whether
        template.html (deck) should get the same override for consistency.
     5. Strip this instructional comment block before shipping the rendered page.
 
-  DO NOT re-derive the print stylesheet, the base target, or the TOC pattern.
-  They are correct here. Verification for a filled page is scoped to CONTENT
-  only (see SKILL.md "Page-mode invariants").
+  The template reduces structural risk. It does not prove browser behavior.
+  Run source lint and browser verification after every render or revision.
   ============================================================================
 -->
 <html lang="en">
@@ -183,7 +177,7 @@
   .callout b, .callout strong { color: var(--ink); }
   .callout-accent { border-left-color: var(--accent); background: var(--accent-soft); }
   .callout-warn { border-left-color: var(--warn); background: var(--warn-soft); }
-  .callout-label { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 0.25rem; }
+  .callout-label { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 0.25rem; }
   .callout-accent .callout-label { color: var(--accent); }
   .callout-warn .callout-label { color: var(--warn); }
 
@@ -194,7 +188,7 @@
   .stat .stat-label { font-size: 0.8rem; color: var(--ink-faint); margin-top: 0.2rem; }
 
   /* ── Pill: inline status label (good / warn / bad / neutral). ── */
-  .pill { display: inline-block; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.04em; padding: 0.15em 0.55em; border-radius: 999px; border: 1px solid var(--rule); vertical-align: middle; }
+  .pill { display: inline-block; font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.04em; padding: 0.15em 0.55em; border-radius: 999px; border: 1px solid var(--rule); vertical-align: middle; white-space: nowrap; }
   .pill-good { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
   .pill-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
   .pill-bad  { background: #f5eaea; color: #9a3a3a; border-color: #9a3a3a; }
@@ -203,30 +197,6 @@
   .section-body table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.92rem; }
   .section-body th { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 2px solid var(--rule); font-family: var(--font-display); }
   .section-body td { padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
-
-  /* ── Fold: the ONE remaining opt-in collapse, for long/optional appendix
-     material only. Default to NOT using it — prefer a .callout. Never nest. ── */
-  details.fold {
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
-    border-radius: 4px;
-    margin: 0.8rem 0;
-    padding: 0.55rem 0.9rem;
-  }
-  details.fold > summary {
-    display: flex; align-items: center; gap: 0.6rem;
-    cursor: pointer; list-style: none;
-    font-size: 0.9rem; font-weight: 600; color: var(--ink-soft);
-    padding: 0.15rem 0;
-  }
-  details.fold > summary::-webkit-details-marker { display: none; }
-  details.fold > summary::before {
-    content: '▸'; font-family: var(--font-mono); color: var(--ink-faint);
-    width: 0.9rem; font-weight: normal;
-  }
-  details.fold[open] > summary::before { content: '▾'; }
-  .fold-body { padding: 0.5rem 0.2rem 0.3rem 1.6rem; border-top: 1px solid var(--rule); margin-top: 0.4rem; }
-  .fold-body p, .fold-body li { margin: 0.3rem 0; font-size: 0.9rem; color: var(--ink-soft); }
 
   a { color: var(--accent); text-underline-offset: 2px; }
   code { font-family: var(--font-mono); font-size: 0.88em; background: var(--paper-2); padding: 0.1rem 0.3rem; border-radius: 3px; }
@@ -254,9 +224,8 @@
     nav.toc, .export-btn, .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn, #comments-panel-btn { display: none !important; }
     section.section { break-before: page; page-break-before: always; border: none; background: none; padding: 0; margin: 0; }
     section.section:first-of-type { break-before: auto; page-break-before: auto; }
-    details.fold { border: none; background: none; padding: 0; margin: 0 0 0.6rem; }
     h2.section-head { font-size: 17pt; margin-bottom: 5mm; padding-bottom: 3mm; }
-    h2.section-head::before, details.fold > summary::before { display: none; }
+    h2.section-head::before { display: none; }
     .section-body p, .section-body li { font-size: 9.5pt; }
     .section-body table { font-size: 8.8pt; margin: 4mm 0; }
     .section-body th, .section-body td { padding: 2.5mm 3mm; }
@@ -264,10 +233,7 @@
     .statgrid { margin: 4mm 0; gap: 3mm; }
     .stat { padding: 3mm 4mm; }
     .callout { break-inside: avoid; }
-    /* Force every opt-in fold open in print — collapsed content must not be lost in the PDF */
-    details.fold { display: block !important; }
-    details.fold > summary { pointer-events: none; }
-    .fold-body, .section-body { display: block !important; }
+    .section-body { display: block !important; }
     * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   }
 
@@ -325,8 +291,7 @@
        Each top-level section is an ALWAYS-VISIBLE block:
          <section class="section" id="anchor-id"> … </section>
        No click-to-open. Put supporting "why/how"/caveats in an always-visible
-       <aside class="callout"> — NOT a nested dropdown. Reach for
-       <details class="fold"> only for long, optional appendix material. -->
+       <aside class="callout"> — NOT a nested dropdown. -->
 
   <section class="section" id="example-section">
     <h2 class="section-head">Example section — delete me</h2>
@@ -355,15 +320,6 @@
         <code>callout</code> for neutral context.
       </aside>
 
-      <details class="fold">
-        <summary>Optional appendix material — delete me</summary>
-        <div class="fold-body">
-          <p>Reserve <code>&lt;details class="fold"&gt;</code> for genuinely long
-             and genuinely optional content: a raw log dump, a full transcript,
-             an exhaustive table nobody needs on first read. If it's short or
-             load-bearing, make it a callout instead. Never nest a fold in a fold.</p>
-        </div>
-      </details>
     </div>
   </section>
 

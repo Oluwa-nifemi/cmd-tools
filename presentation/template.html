@@ -1,15 +1,14 @@
 <!DOCTYPE html>
 <!--
   ============================================================================
-  PRESENTATION TEMPLATE — correct-by-construction skeleton.
+  PRESENTATION TEMPLATE — stable browser chrome for HTML decks.
 
   This file already satisfies EVERY hard invariant in SKILL.md:
     - <base target="_blank" /> in <head>
     - hash routing per slide (window.location.hash + hashchange)
-    - @media print stylesheet (flat document, details forced open, chrome hidden)
+    - @media print stylesheet (flat document, chrome hidden)
     - Export-to-PDF button (.export-btn -> window.print())
-    - keyboard/touch/nav, TOC overlay, details toggle (with scrollIntoView),
-      code modal (one-shot hljs.highlightElement, NO MutationObserver)
+    - keyboard/touch/nav, TOC overlay, and one reusable modal
     - editorial/typewriter aesthetic tokens
 
   Navigation is DERIVED FROM THE DOM: it reads every <section class="slide">
@@ -20,18 +19,17 @@
   HOW TO USE:
     1. Replace TITLE_PLACEHOLDER (twice: <title> and cover).
     2. Replace the SUBTITLE / cover text.
-    3. Replace the single example slide block between <!-- SLIDES:START --> and
-       <!-- SLIDES:END --> with your real slides. Each slide is:
+    3. Replace the single example slide block between the SLIDES START and END
+       markers with your real slides. Each slide is:
          <section class="slide" data-title="Short TOC label"> ... </section>
        The cover is just the first .slide (add class "cover" for centering).
-    4. Fill content. Use the provided component patterns (stat-cards, details
-       panel, code modal trigger, SVG). Do NOT rewrite the CSS or the JS below
-       the SLIDES block — it is invariant and already correct.
+    4. Fill content. Keep load-bearing content visible. Use the modal only for
+       optional dense evidence. Do NOT rewrite the CSS or the JS below
+       the SLIDES block — it is shared infrastructure.
     5. Only override aesthetic tokens if the brief's "Aesthetic overrides" says so.
 
-  DO NOT re-derive the chrome and then screenshot-verify it. It is correct here.
-  Verification for a filled deck is scoped to CONTENT + SVG geometry only
-  (see SKILL.md "Confirm completion").
+  The template reduces structural risk. It does not prove browser behavior.
+  Run source lint and browser verification after every render or revision.
   ============================================================================
 -->
 <html lang="en">
@@ -84,7 +82,7 @@
     .slide.cover { justify-content: safe center; }
 
     .slide-label {
-      font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.14em;
+      font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.14em;
       text-transform: uppercase; color: var(--ink-faint); margin-bottom: 0.9rem;
     }
     h1.cover-title { font-family: var(--font-display); font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.1; margin: 0 0 1.2rem; font-weight: 600; }
@@ -110,7 +108,7 @@
     .stat-row { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.2rem 0; width: 100%; }
     .stat-card { flex: 1 1 8rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; }
     .stat-card .stat-value { font-family: var(--font-display); font-size: clamp(1.3rem, 2.6vw, 2rem); color: var(--ink); }
-    .stat-card .stat-label { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-top: 0.35rem; }
+    .stat-card .stat-label { font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-top: 0.35rem; }
 
     /* Note / caveat boxes */
     .note-box { border-left: 3px solid var(--rule); background: var(--paper-2); padding: 0.9rem 1.2rem; margin: 1rem 0; max-width: 74ch; border-radius: 0 4px 4px 0; }
@@ -121,17 +119,7 @@
     th, td { text-align: left; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--rule); }
     th { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
 
-    /* ── Progressive disclosure ── */
-    .details-toggle { margin-top: 1.4rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent); cursor: pointer; user-select: none; background: none; border: none; padding: 0; }
-    .details-toggle .chevron { display: inline-block; transition: transform 0.2s; }
-    .details-toggle.open .chevron { transform: rotate(90deg); }
-    .details-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; max-width: 74ch; }
-    .details-panel.open { max-height: 3000px; }
-    .details-panel-inner { padding: 1rem 0 0.2rem; border-top: 1px solid var(--rule); margin-top: 0.8rem; }
-    .details-panel-inner p, .details-panel-inner li { font-size: 1rem; color: var(--ink-soft); }
-    .details-panel-inner .ref-list li { font-size: 0.95rem; }
-
-    /* ── Code block + modal ── */
+    /* ── Optional evidence modal ── */
     .code-block { cursor: pointer; position: relative; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; margin: 1rem 0; overflow-x: auto; max-width: 100%; }
     .code-block::after { content: "\2197"; position: absolute; top: 0.4rem; right: 0.6rem; opacity: 0.35; pointer-events: none; }
     .code-block:hover::after { opacity: 1; }
@@ -162,7 +150,7 @@
     .toc-item:hover { color: var(--accent); }
     .toc-item .toc-num { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-faint); margin-right: 0.9rem; }
 
-    /* ── Print: flat document, all slides visible, details open, chrome hidden ── */
+    /* ── Print: flat document, all slides visible, chrome hidden ── */
     @page { size: 297mm 210mm; margin: 15mm 20mm; }
     @media print {
       body, #stage { position: static !important; height: auto !important; overflow: visible !important; }
@@ -172,8 +160,6 @@
         overflow: visible !important; padding: 1.5rem 2rem 1rem !important;
         border-bottom: 2px solid var(--rule); margin-bottom: 2rem;
       }
-      .details-panel { display: block !important; max-height: none !important; overflow: visible !important; }
-      .details-toggle { display: none !important; }
       #nav-controls, .toc-overlay, #toc-btn, .slide-counter, .export-btn, .nav-btn { display: none !important; }
       #code-modal { display: none !important; }
       .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn { display: none !important; }
@@ -233,14 +219,8 @@
       <div class="stat-card"><div class="stat-value">×2</div><div class="stat-label">example</div></div>
     </div>
 
-    <!-- Progressive disclosure — the toggle+panel pattern is wired by the JS below automatically -->
-    <button class="details-toggle"><span class="chevron">▸</span> Details</button>
-    <div class="details-panel"><div class="details-panel-inner">
-      <p>Deeper "why" / "why not the other path" lives here.</p>
-    </div></div>
-
-    <!-- Optional "See code" — put source in a hidden .see-code-src; button opens the modal -->
-    <button class="see-code-btn">See code</button>
+    <!-- Optional evidence modal. Use a specific label and declare the revealed target for verification. -->
+    <button class="see-code-btn" data-verify-target="#code-modal">View implementation excerpt</button>
     <div class="see-code-src"><pre><code class="language-clojure">(comment "example")</code></pre></div>
   </section>
 
@@ -322,14 +302,12 @@
     document.getElementById('toc-btn').addEventListener('click', function () { tocOverlay.classList.toggle('visible'); });
     tocOverlay.addEventListener('click', function (e) { if (e.target === tocOverlay) tocOverlay.classList.remove('visible'); });
 
-    // Keyboard — don't hijack when focus is inside an open details panel or a modal is up.
+    // Keyboard — don't navigate slides while the modal is open.
     document.addEventListener('keydown', function (e) {
       if (document.getElementById('code-modal').classList.contains('visible')) {
         if (e.key === 'Escape') hideModal();
         return;
       }
-      var inPanel = e.target.closest && e.target.closest('.details-panel.open');
-      if (inPanel && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return;
       if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
       else if (e.key === 'Escape') { tocOverlay.classList.remove('visible'); }
@@ -352,36 +330,6 @@
       show(0, false);
     }
     window.addEventListener('hashchange', fromHash);
-
-    // Details toggles — wired generically, scroll into view on open
-    document.querySelectorAll('.details-toggle').forEach(function (toggle) {
-      var panel = toggle.nextElementSibling;
-      toggle.addEventListener('click', function () {
-        var isOpen = panel.classList.contains('open');
-        panel.classList.toggle('open', !isOpen);
-        toggle.classList.toggle('open', !isOpen);
-        if (!isOpen) {
-          // Wait for the max-height transition to finish before measuring/scrolling —
-          // scrolling on the next animation frame (old behavior) measures the panel
-          // mid-transition (near-zero height), so it scrolls to the wrong spot and
-          // the newly revealed content ends up clipped/off-screen.
-          var settled = false;
-          function scrollWhenSettled() {
-            if (settled) return;
-            settled = true;
-            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          }
-          panel.addEventListener('transitionend', function onEnd(e) {
-            if (e.propertyName !== 'max-height') return;
-            panel.removeEventListener('transitionend', onEnd);
-            scrollWhenSettled();
-          });
-          // Fallback in case transitionend doesn't fire (e.g. reduced-motion, or
-          // the browser coalesces the transition away).
-          setTimeout(scrollWhenSettled, 350);
-        }
-      });
-    });
 
     // Code modal — one-shot highlight, NO MutationObserver (infinite-loop trap)
     var codeModal = document.getElementById('code-modal');
