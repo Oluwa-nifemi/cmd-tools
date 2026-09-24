@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Open a GitHub pull request with a lean, why-focused description. Use when the user asks to create/open/raise a PR (draft or ready), to write or rewrite a PR description or body, or to push a branch and open a PR. 
+description: Open a GitHub pull request with a focused, why-first description that matches the size of the change. Use when the user asks to create/open/raise a PR (draft or ready), to write or rewrite a PR description or body, or to push a branch and open a PR. 
 ---
 
 # Create PR
@@ -9,25 +9,27 @@ Open a PR whose description explains why the change exists and what was built, i
 
 ## Non-negotiable rules
 
-1. **Why, then what you built.** Start with the situation or problem. Then say what you did about it and name the pieces at a useful level of abstraction. Do not narrate the diff line by line, but do tell the reader what's actually in the PR. A description that only explains motivation without saying what was built is as bad as one that only lists files.
+1. **Why, then what you built.** Start with the situation or problem. Complete the problem-to-solution story before any sections: what fails today, why it matters, and how the PR addresses it. Then name the pieces at a useful level of abstraction. Do not narrate the diff line by line, but do tell the reader what's actually in the PR. A description that only explains motivation without saying what was built is as bad as one that only lists files.
 2. **No slop.** No AI vocabulary (crucial, leverage, enhance, foster, utilize, facilitate, streamline, comprehensive, robust). No puffery, no sycophancy, no filler phrases ("in order to", "it is important to note"). No em dashes. Use periods or commas only. No synonym cycling. Prefer plain words. Say "use" not "utilize", "help" not "facilitate", "many" not "numerous".
 3. **No verification section.** Never add "Verification", "Testing", "Checks", or any passing-tests/lint/CI report. CI reports itself.
 4. **No out-of-scope section unless asked.** Omit "Out of scope", "Deferred", "Future work", "Follow-ups" unless the user explicitly asks, or scope was a genuinely contested decision a reviewer must know about.
 5. **Write like a person talking to a colleague.** Short, ordinary sentences. Say "we" and "I". Use the names the team says out loud. No literary constructions, no words picked to sound impressive. If you wouldn't say it at someone's desk, rewrite it.
 
-Also: no generated-by footers, no `Co-Authored-By` trailers, no emoji headers, no self-praise, no bold-label bullet dumps that restate what the heading already said.
+Also: no generated-by footers, no `Co-Authored-By` trailers, no emoji labels, and no self-praise.
 
 ## Structure
 
-A good PR description has two parts:
+A good PR description starts with the situation and approach. Explain what exists today, why that is a problem, and how the PR addresses it. This opening should stand on its own. Do not state the problem, add a label, and then restart with "This PR fixes that case."
 
-**The situation.** One or two sentences on what exists today (or doesn't) and why that's a problem. Start here, not with the mechanics of the patch.
-
-**What you built.** Name the concrete pieces at a level of abstraction that helps a reviewer orient before reading the diff. Default to a bullet list. Bullets are easier for the human brain to parse than prose paragraphs. Each bullet should say what the piece does, not just that it exists. Use prose only when the change is one cohesive thing that doesn't break into separate pieces.
+Follow the opening with concrete bullets when they help a reviewer understand what was built. Do not add a heading or label just to introduce the bullets. Each bullet should say what the piece does, not just that it exists. Use prose when the change is one cohesive thing that does not need a list.
 
 If a reviewer would trip over something (a tradeoff, a surprising decision, something that looks wrong but isn't, a dependency on other work), mention it. If nothing like that applies, stop after the two parts above.
 
-Match length to the change. A one-line fix gets one or two sentences. A multi-file feature gets a paragraph of context and a list of the pieces. Headings only if the body is long enough to need navigation.
+Match detail to the change. A one-line fix gets one or two sentences. A multi-file feature can use a fuller opening and short sections when that makes the change easier to understand.
+
+Add sections only when the PR contains distinct concerns that are easier to review separately. Use short bold labels, not Markdown headings. Do not add generic labels such as **What changed**. Separate main behavior, shared infrastructure, and local tooling only when the split improves the description. It is fine to fold them together.
+
+After drafting, reread the full description as one story. Check that the opening flows into the details and related points stay together. Remove every label that does not separate genuinely different concerns. Prefer no sections when unsure.
 
 ## Calibration examples
 
@@ -70,6 +72,9 @@ Rewrite anything that reads like these:
 - "The subtlety worth reviewing is..." / "The load-bearing detail is..." Just state the thing.
 - "effectively unbounded", "by construction", "genuinely", "materially", "notably". Pick the ordinary word.
 - A closing paragraph that restates the opening one in different words. Say it once.
+- A problem statement followed by a section label and another sentence that restarts the solution. Complete the problem-to-solution story before any sections.
+- A heading or bold label that only introduces the PR's single bullet list. Remove it and let the opening flow directly into the bullets.
+- Generic labels such as **What changed**. They add visual noise without helping the reviewer navigate.
 - Defending a rejected alternative at length. The reviewer needs the decision, not the debate.
 - Any sentence you would not say out loud to a colleague at their desk.
 - Pure motivation with no concrete detail. "We needed better X so this improves X" tells the reviewer nothing about what they're about to look at.
@@ -96,8 +101,9 @@ Before finalizing, scan for and fix:
 4. **Verify the base and remote branch.** Confirm the base (usually `main`) and that the branch's upstream is not the base itself. Push explicitly: `git push -u origin HEAD:<branch>`.
 5. **Stage deliberately.** Only files belonging to this change. Leave unrelated dirty files and user-added debug logging alone; mention them instead of reverting.
 6. **Write the body to a temp file** — `mktemp -t pr-body` or `/tmp/pr-body-<branch>.md` — then pass `--body-file`. Use `/tmp` rather than the repo's `local/`.
-7. **Create it:** `gh pr create --draft --base <base> --title "<TICKET-123> <summary>" --body-file <path>`. Use `gh`, never a web/MCP route. Default to `--draft` unless the user says ready. In sandboxed environments request escalation up front.
-8. **Verify and report:** `gh pr view <n> --json number,isDraft,state,baseRefName,url`. Report the URL and draft state.
+7. **Reread the body as rendered prose.** Confirm that it tells one connected story and that any bold sections separate distinct concerns. Remove generic or unnecessary labels before publishing.
+8. **Create it:** `gh pr create --draft --base <base> --title "<TICKET-123> <summary>" --body-file <path>`. Use `gh`, never a web/MCP route. Default to `--draft` unless the user says ready. In sandboxed environments request escalation up front.
+9. **Verify and report:** `gh pr view <n> --json number,isDraft,state,baseRefName,url`. Report the URL and draft state.
 
 ## After creating
 
