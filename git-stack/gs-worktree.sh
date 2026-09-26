@@ -17,11 +17,13 @@ branch_owner_path() {
 }
 
 worktree_has_git_operation() {
-  local path="$1" marker marker_path
-  for marker in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
-    marker_path="$(git -C "$path" rev-parse --path-format=absolute --git-path "$marker" 2>/dev/null)" || continue
-    [[ -e "$marker_path" ]] && return 0
-  done
+  local path="$1" marker_path
+  # One rev-parse resolves every marker path, one per output line.
+  while IFS= read -r marker_path; do
+    [[ -n "$marker_path" && -e "$marker_path" ]] && return 0
+  done < <(git -C "$path" rev-parse --path-format=absolute \
+    --git-path rebase-merge --git-path rebase-apply --git-path MERGE_HEAD \
+    --git-path CHERRY_PICK_HEAD --git-path REVERT_HEAD --git-path BISECT_LOG 2>/dev/null)
   return 1
 }
 
@@ -71,7 +73,8 @@ validate_restack_bases() {
 }
 
 would_create_stack_cycle() {
-  local branch="$1" parent="$2" seen=" $branch "
+  local branch="$1" parent="$2"
+  local seen=" $branch "
   while [[ -n "$parent" ]]; do
     [[ "$seen" != *" $parent "* ]] || return 0
     seen="$seen$parent "
@@ -84,12 +87,25 @@ operation_dir() {
   printf '%s\n' "$(gs_dir)/operation"
 }
 
+# Prints the value of the first KEY= line in FILE. Pure bash: restacks call
+# this several times per branch, and each sed | head pair cost two processes.
+file_value() {
+  local key="$1" file="$2" line
+  [[ -f "$file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      printf '%s\n' "${line#"$key="}"
+      return 0
+    fi
+  done < "$file"
+}
+
 journal_value() {
-  sed -n "s/^$1=//p" "$(operation_dir)/journal" | head -1
+  file_value "$1" "$(operation_dir)/journal"
 }
 
 finalizer_value() {
-  sed -n "s/^$1=//p" "$(operation_dir)/finalizer" | head -1
+  file_value "$1" "$(operation_dir)/finalizer"
 }
 
 set_finalizer_value() {
@@ -104,7 +120,7 @@ set_finalizer_value() {
 }
 
 step_value() {
-  sed -n "s/^$2=//p" "$(operation_dir)/steps/$1" | head -1
+  file_value "$2" "$(operation_dir)/steps/$1"
 }
 
 write_restack_journal_at() {
@@ -112,10 +128,12 @@ write_restack_journal_at() {
   shift
   local status="$1" index="$2" branch="${3:-}" parent="${4:-}"
   local executor="${5:-}" temporary="${6:-0}" old_oid="${7:-}" old_parent_oid="${8:-}"
-  local total caller stash
-  total="$(find "$op/steps" -type f 2>/dev/null | wc -l | tr -d ' ')"
-  caller="$(cat "$op/caller")"
-  stash="$(cat "$op/stash" 2>/dev/null || true)"
+  local total=0 caller stash step_file
+  for step_file in "$op"/steps/*; do
+    [[ -f "$step_file" ]] && total=$((total + 1))
+  done
+  caller="$(read_first_line "$op/caller")"
+  stash="$(read_first_line "$op/stash" 2>/dev/null || true)"
   atomic_write "$op/journal" "operation=restack
 status=$status
 current_step=$index
@@ -615,7 +633,7 @@ cmd_status() {
 
 guard_command_against_active_operation() {
   local command="$1" action="${2:-}" op
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  [[ -n "${GS_COMMON_DIR:-}" ]] || return 0
   op="$(operation_dir)"
   [[ -d "$op" ]] || return 0
   case "$command:$action" in
@@ -641,8 +659,8 @@ release_mutation_lock() {
 acquire_mutation_lock() {
   local command="$1" lock
   command_mutates_repository "$command" || return 0
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
-  lock="$(git_common_dir)/gs-mutation.lock"
+  [[ -n "${GS_COMMON_DIR:-}" ]] || return 0
+  lock="$GS_COMMON_DIR/gs-mutation.lock"
   if ! mkdir "$lock" 2>/dev/null; then
     local owner_pid
     owner_pid="$(cat "$lock/pid" 2>/dev/null || true)"

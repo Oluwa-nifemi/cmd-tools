@@ -57,20 +57,29 @@ success() {
 }
 
 ensure_git_repo() {
-  git rev-parse --git-dir &>/dev/null || die "not a git repository"
+  [[ -n "${GS_COMMON_DIR:-}" ]] || die "not a git repository"
 }
 
-git_dir() {
-  git rev-parse --absolute-git-dir
-}
-
+# main resolves this once. Every git process costs 5-25 ms here, and the
+# metadata helpers below used to re-run rev-parse on each call (16 times for
+# one `gs ls`). All linked worktrees share one common dir, so it stays valid
+# even when gs runs git in another worktree of the same repo.
 git_common_dir() {
-  git rev-parse --path-format=absolute --git-common-dir
+  printf '%s\n' "$GS_COMMON_DIR"
+}
+
+# Reads the first line of a file without starting `cat`. Fails when the file
+# is missing, like `cat` did.
+read_first_line() {
+  local line=""
+  [[ -f "$1" ]] || return 1
+  IFS= read -r line < "$1" || true
+  printf '%s\n' "$line"
 }
 
 atomic_write() {
   local target="$1" value="$2" tmp
-  mkdir -p "$(dirname "$target")"
+  [[ -d "${target%/*}" ]] || mkdir -p "${target%/*}"
   tmp="${target}.tmp.$$"
   printf '%s\n' "$value" > "$tmp"
   mv "$tmp" "$target"
@@ -84,7 +93,10 @@ metadata_dirs_match() {
 # worktree's private git directory. Move one consistent legacy copy into the
 # common git directory. Conflicting copies need a human decision.
 migrate_legacy_metadata() {
-  local common="$1" shared="$common/gs" legacy_dirs=() candidate d
+  # Separate declarations: bash 3.2 does not see a local assigned earlier in
+  # the same `local` statement.
+  local common="$1"
+  local shared="$common/gs" legacy_dirs=() candidate d
 
   if [[ -d "$common/worktrees" ]]; then
     for d in "$common"/worktrees/*/gs; do
@@ -121,10 +133,8 @@ migrate_legacy_metadata() {
 }
 
 gs_dir() {
-  local common
-  common="$(git_common_dir)"
-  migrate_legacy_metadata "$common"
-  printf '%s\n' "$common/gs"
+  migrate_legacy_metadata "$GS_COMMON_DIR"
+  printf '%s\n' "$GS_COMMON_DIR/gs"
 }
 
 ensure_gs_init() {
@@ -139,21 +149,24 @@ current_branch() {
 }
 
 trunk_branch() {
-  cat "$(gs_dir)/config" 2>/dev/null || die "cannot read trunk config"
+  read_first_line "$(gs_dir)/config" || die "cannot read trunk config"
 }
 
 branch_exists() {
   git show-ref --verify --quiet "refs/heads/$1" 2>/dev/null
 }
 
-# Encode branch name for safe filesystem use (/ -> %2F)
+# Encode branch name for safe filesystem use (/ -> %2F). Bash expansion
+# instead of sed: this runs once per branch file on every listing.
 encode_branch() {
-  echo "$1" | sed 's/%/%25/g; s|/|%2F|g'
+  local s="${1//\%/%25}"
+  printf '%s\n' "${s//\//%2F}"
 }
 
 # Decode branch name from filesystem (%2F -> /)
 decode_branch() {
-  echo "$1" | sed 's|%2F|/|g; s/%25/%/g'
+  local s="${1//%2F//}"
+  printf '%s\n' "${s//%25/%}"
 }
 
 is_tracked() {
@@ -161,9 +174,7 @@ is_tracked() {
 }
 
 get_parent() {
-  local f
-  f="$(gs_dir)/branches/$(encode_branch "$1")"
-  [[ -f "$f" ]] && cat "$f" || return 1
+  read_first_line "$(gs_dir)/branches/$(encode_branch "$1")"
 }
 
 set_parent() {
@@ -186,9 +197,7 @@ remove_tracking() {
 }
 
 get_base_oid() {
-  local f
-  f="$(gs_dir)/bases/$(encode_branch "$1")"
-  [[ -f "$f" ]] && cat "$f" || return 1
+  read_first_line "$(gs_dir)/bases/$(encode_branch "$1")"
 }
 
 set_base_oid() {
@@ -197,20 +206,16 @@ set_base_oid() {
 
 # Return all tracked children of a branch
 get_children() {
-  local parent="$1"
-  local dir
+  local parent="$1" dir f value
   dir="$(gs_dir)/branches"
   [[ -d "$dir" ]] || return 0
   for f in "$dir"/*; do
     [[ -f "$f" ]] || continue
-    local encoded_child
-    encoded_child="$(basename "$f")"
-    local child
-    child="$(decode_branch "$encoded_child")"
-    if [[ "$(cat "$f")" == "$parent" ]]; then
-      echo "$child"
-    fi
+    value=""
+    IFS= read -r value < "$f" || [[ -n "$value" ]] || continue
+    [[ "$value" == "$parent" ]] && decode_branch "${f##*/}"
   done
+  return 0
 }
 
 # Check if $1 is in the list of subsequent args
@@ -268,330 +273,6 @@ cmd_init() {
   success "initialized gs with trunk branch '$trunk'"
 }
 
-# Create a new branch stacked on the current one. Optionally commit staged changes.
-# Auto-tracks the parent if it wasn't already tracked.
-cmd_create() {
-  ensure_gs_init
-  local name=""
-  local message=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -m) shift; message="${1:-}"; [[ -z "$message" ]] && die "-m requires a message" ;;
-      -*) die "unknown flag: $1" ;;
-      *)  name="$1" ;;
-    esac
-    shift
-  done
-
-  [[ -z "$name" ]] && die "usage: gs create <name> [-m \"message\"]"
-  branch_exists "$name" && die "branch '$name' already exists"
-
-  local parent
-  parent="$(current_branch)"
-
-  git checkout -b "$name" --quiet
-  track_branch "$name" "$parent"
-
-  # Also track parent if it's not trunk and not yet tracked
-  local trunk
-  trunk="$(trunk_branch)"
-  if [[ "$parent" != "$trunk" ]] && ! is_tracked "$parent"; then
-    track_branch "$parent" "$trunk"
-    info "auto-tracked parent '$parent' onto '$trunk'"
-  fi
-
-  if [[ -n "$message" ]]; then
-    git commit -m "$message" --allow-empty --quiet 2>/dev/null || git commit -m "$message" --quiet
-  fi
-
-  success "created branch '$name' stacked on '$parent'"
-}
-
-# Retroactively add existing branches to a stack. List them bottom-to-top.
-# First branch stacks onto trunk (or --onto target), each subsequent one stacks on the previous.
-cmd_track() {
-  ensure_gs_init
-  local onto=""
-  local branches=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --onto) shift; onto="${1:-}"; [[ -z "$onto" ]] && die "--onto requires a branch name" ;;
-      -*) die "unknown flag: $1" ;;
-      *)  branches+=("$1") ;;
-    esac
-    shift
-  done
-
-  [[ ${#branches[@]} -eq 0 ]] && die "usage: gs track <branch1> [branch2] ... [--onto <branch>]"
-
-  local trunk
-  trunk="$(trunk_branch)"
-  local parent="${onto:-$trunk}"
-
-  # Validate parent
-  if [[ "$parent" != "$trunk" ]] && ! branch_exists "$parent"; then
-    die "branch '$parent' does not exist"
-  fi
-
-  local initial_parent="${onto:-$trunk}"
-
-  for b in "${branches[@]}"; do
-    branch_exists "$b" || die "branch '$b' does not exist"
-    track_branch "$b" "$parent"
-    info "tracked '$b' onto '$parent'"
-    parent="$b"
-  done
-
-  info "restacking tracked branches..."
-  restack_upstack "$initial_parent"
-  cleanup_restack_tips
-  success "tracked ${#branches[@]} branch(es)"
-}
-
-# Add an existing branch on top of the current one. No flags needed.
-cmd_stack() {
-  ensure_gs_init
-  local branch="${1:-}"
-  [[ -z "$branch" ]] && die "usage: gs stack <branch>"
-  branch_exists "$branch" || die "branch '$branch' does not exist"
-
-  local cur
-  cur="$(current_branch)"
-  track_branch "$branch" "$cur"
-  success "stacked '$branch' onto '$cur'"
-}
-
-# Commit to the current branch, then auto-rebase all upstack branches.
-# This is the key difference from Graphite: we add commits, not amend them.
-# All flags are passed through to git commit.
-cmd_commit() {
-  ensure_gs_init
-  local args=()
-  local has_message=false
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -m) has_message=true; args+=("$1"); shift; args+=("${1:-}") ;;
-      *)  args+=("$1") ;;
-    esac
-    shift
-  done
-
-  git commit "${args[@]}"
-
-  local cur
-  cur="$(current_branch)"
-
-  info "restacking upstack branches..."
-  restack_upstack "$cur"
-  cleanup_restack_tips
-  success "commit done and upstack restacked"
-}
-
-# Manual rebase propagation. Use this when you've made changes with raw git
-# commands instead of gs commit. --all restacks the entire stack from trunk.
-# --continue resumes after resolving a rebase conflict.
-cmd_restack() {
-  ensure_gs_init
-  local mode="upstack"
-  local autostash=0
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --upstack) mode="upstack" ;;
-      --all)     mode="all" ;;
-      --autostash) autostash=1 ;;
-      --continue) restack_continue; return ;;
-      *) die "unknown argument: $1" ;;
-    esac
-    shift
-  done
-
-  [[ $autostash -eq 1 ]] && restack_autostash_push
-
-  if [[ "$mode" == "all" ]]; then
-    local trunk
-    trunk="$(trunk_branch)"
-    restack_upstack "$trunk"
-  else
-    restack_upstack "$(current_branch)"
-  fi
-  cleanup_restack_tips
-  success "restack complete"
-}
-
-# Core restack engine: recursively rebase each child onto its parent, depth-first.
-# On conflict, saves state to .git/gs/restack_state for --continue to resume.
-#
-# The tricky part: after rebasing child A onto parent P, A has new commit hashes.
-# If A has its own children, they still reference A's OLD commits. So we can't
-# use merge-base to find the fork point — it'll go too far back.
-# Instead, we save each branch's old tip BEFORE rebasing, and use that as the
-# fork point for its children. This is stored in .git/gs/old_tips/<branch>.
-restack_upstack() {
-  local base="$1"
-  local children
-  children="$(get_children "$base")"
-
-  local original_branch
-  original_branch="$(current_branch)"
-
-  local tips_dir
-  tips_dir="$(gs_dir)/old_tips"
-  mkdir -p "$tips_dir"
-
-  # `child` must be local — bash for-loop variables aren't scoped by default,
-  # so without this an unrelated caller's own `child` variable further up the
-  # call stack gets clobbered once this function (or its recursion) returns.
-  local child
-  for child in $children; do
-    branch_exists "$child" || continue
-
-    # Skip if child is already on top of base. Tip-equality alone misses the
-    # case where the child was just rebased (e.g. by restack_continue resuming
-    # from the parent) — its tip differs from base but base is in its ancestry.
-    # Checked before computing fork_point/warning below: a true no-op has
-    # nothing to rebase, so the "no saved old-tip" warning would just be noise.
-    if git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
-      info "'$child' is already up to date with '$base'"
-      restack_upstack "$child"
-      continue
-    fi
-
-    # Determine the fork point: if we previously rebased the parent and saved
-    # its old tip, use that. Otherwise fall back to merge-base.
-    local fork_point=""
-    local old_tip_file="$tips_dir/$(encode_branch "$base")"
-    if [[ -f "$old_tip_file" ]]; then
-      # Parent was rebased — child is still based on parent's old commits.
-      # The old tip of the parent is the correct fork point.
-      fork_point="$(cat "$old_tip_file")"
-    else
-      # No saved old-tip for the parent. This happens when the user mutated
-      # the parent's history with raw git (rebase / reset / amend) before
-      # invoking `gs restack`. merge-base may go further back than the real
-      # fork — if the parent had its commits rewritten with new SHAs, the
-      # rebase can pick up duplicates of commits that already exist on the
-      # new parent. We surface this rather than silently producing duplicates.
-      fork_point="$(git merge-base "$base" "$child" 2>/dev/null)" || fork_point="$base"
-      warn "no saved old-tip for '$base' (gs commit wasn't used). Falling back to merge-base. If '$base' was rebased, the upstack rebase may include duplicate commits or hit unexpected conflicts."
-    fi
-
-    # Save child's current tip before rebasing (its children will need this)
-    git rev-parse "$child" > "$tips_dir/$(encode_branch "$child")"
-
-    info "rebasing '$child' onto '$base'..."
-
-    if ! git rebase --onto "$base" "$fork_point" "$child" --quiet; then
-      # Conflict detected — save state for --continue
-      local state_file
-      state_file="$(gs_dir)/restack_state"
-      {
-        echo "child=$child"
-        echo "base=$base"
-        echo "original=$original_branch"
-      } > "$state_file"
-      printf "\n${RED}conflict detected${RESET} while rebasing '${YELLOW}$child${RESET}' onto '${YELLOW}$base${RESET}'\n"
-      echo "Resolve conflicts, stage files, then run: gs restack --continue"
-      exit 1
-    fi
-
-    # Recurse into children of child
-    restack_upstack "$child"
-  done
-
-  # Return to original branch if we're still on it
-  if [[ "$(current_branch)" != "$original_branch" ]] && branch_exists "$original_branch"; then
-    git checkout "$original_branch" --quiet 2>/dev/null || true
-  fi
-}
-
-# Clean up old_tips after a full restack completes
-cleanup_restack_tips() {
-  rm -rf "$(gs_dir)/old_tips"
-  restack_autostash_pop
-}
-
-# Autostash support for `gs restack --autostash`. Stashes dirty working-tree
-# state before the rebase chain starts; cleanup_restack_tips pops it back once
-# the whole chain succeeds — whether that happens in one shot or via a later
-# `--continue` resume — so the pop always happens on the same branch it was
-# stashed from, once the tree is safe to touch again.
-restack_autostash_push() {
-  local stash_marker
-  stash_marker="$(gs_dir)/restack_stash"
-  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-    git stash push -u --quiet -m "gs-restack-autostash" || die "autostash failed — resolve working tree state and retry"
-    touch "$stash_marker"
-  fi
-}
-
-restack_autostash_pop() {
-  local stash_marker
-  stash_marker="$(gs_dir)/restack_stash"
-  if [[ -f "$stash_marker" ]]; then
-    rm -f "$stash_marker"
-    git stash pop --quiet || warn "autostash pop hit a conflict — resolve manually, your stashed changes are still in 'git stash list'"
-  fi
-}
-
-restack_continue() {
-  local state_file
-  state_file="$(gs_dir)/restack_state"
-  [[ -f "$state_file" ]] || die "no restack in progress"
-
-  # Parse state file safely (child, base, original one per line)
-  local child="" base="" original=""
-  while IFS='=' read -r key value; do
-    case "$key" in
-      child) child="$value" ;;
-      base) base="$value" ;;
-      original) original="$value" ;;
-    esac
-  done < "$state_file"
-
-  # Only call `git rebase --continue` if a rebase is actually in progress.
-  # If it's not (e.g. the user ran `git rebase --continue` directly and it
-  # already finished), calling it again fails with "no rebase in progress" —
-  # a different situation from "still conflicted" that used to get the same
-  # wrong message and leave restack_state stale forever.
-  local rebase_in_progress=0
-  if [[ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ]] || \
-     [[ -d "$(git rev-parse --git-path rebase-apply 2>/dev/null)" ]]; then
-    rebase_in_progress=1
-  fi
-
-  if [[ $rebase_in_progress -eq 1 ]]; then
-    if ! git rebase --continue; then
-      echo "Still have conflicts. Resolve them and run 'gs restack --continue' again."
-      exit 1
-    fi
-  elif ! git merge-base --is-ancestor "$base" "$child" 2>/dev/null; then
-    # No rebase in progress, but child was never landed onto base either —
-    # the rebase was likely aborted rather than finished. Don't guess.
-    rm -f "$state_file"
-    die "no rebase in progress and '$child' wasn't rebased onto '$base' — restack state was stale. Run 'gs restack --all' to retry."
-  fi
-  # else: the rebase already completed on its own — fall through and resume
-  # propagation from $base so remaining siblings still get processed.
-
-  rm -f "$state_file"
-
-  # Resume from the parent so remaining siblings get processed too.
-  # The just-resolved child will be skipped by the "already up to date" check.
-  restack_upstack "$base"
-
-  # Return to original branch
-  if branch_exists "$original"; then
-    git checkout "$original" --quiet 2>/dev/null || true
-  fi
-
-  cleanup_restack_tips
-  success "restack continued and completed"
-}
-
 # Build a cache dir with PR status and dirty state for all tracked branches.
 # Returns the cache directory path via stdout.
 build_ls_cache() {
@@ -619,21 +300,22 @@ build_ls_cache() {
   fi
 
   # Dirty state: map worktree paths → branch names, then check git status.
-  local wt_path="" wt_head=""
+  local wt_path="" wt_branch=""
   while IFS= read -r line; do
     if [[ "$line" == "worktree "* ]]; then
       wt_path="${line#worktree }"
-      wt_head=""
-    elif [[ "$line" == "HEAD "* ]]; then
-      wt_head="${line#HEAD }"
+      wt_branch=""
+    elif [[ "$line" == "branch "* ]]; then
+      wt_branch="${line#branch }"
     elif [[ -z "$line" && -n "$wt_path" ]]; then
-      local br
-      br="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)" || br=""
+      # The porcelain listing already names each worktree's branch, so no
+      # extra rev-parse per worktree. Detached worktrees have no branch line.
+      local br="${wt_branch#refs/heads/}"
       if [[ -n "$br" ]] && [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
         touch "$cache_dir/dirty_$(encode_branch "$br")"
       fi
       wt_path=""
-      wt_head=""
+      wt_branch=""
     fi
   done < <(git worktree list --porcelain)
 
@@ -692,7 +374,7 @@ print_tree() {
     local pr=""
     local pr_file="$cache_dir/pr_$(encode_branch "$child")"
     if [[ -f "$pr_file" ]]; then
-      case "$(cat "$pr_file")" in
+      case "$(read_first_line "$pr_file")" in
         OPEN)   pr=" ${GREEN}[open]${RESET}" ;;
         MERGED) pr=" ${MAGENTA}[merged]${RESET}" ;;
         CLOSED) pr=" ${RED}[closed]${RESET}" ;;
@@ -766,7 +448,7 @@ print_log_tree() {
     local pr=""
     local pr_file="$cache_dir/pr_$(encode_branch "$child")"
     if [[ -f "$pr_file" ]]; then
-      case "$(cat "$pr_file")" in
+      case "$(read_first_line "$pr_file")" in
         OPEN)   pr=" ${GREEN}[open]${RESET}" ;;
         MERGED) pr=" ${MAGENTA}[merged]${RESET}" ;;
         CLOSED) pr=" ${RED}[closed]${RESET}" ;;
@@ -913,239 +595,6 @@ cmd_bottom() {
 
   checkout_navigation_target "$cur"
   success "switched to '$cur' (bottom of stack)"
-}
-
-# Reparent the current branch onto a different target. Rebases and restacks upstack.
-cmd_move() {
-  ensure_gs_init
-  local target=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --onto) shift; target="${1:-}"; [[ -z "$target" ]] && die "--onto requires a branch" ;;
-      *) die "usage: gs move --onto <target>" ;;
-    esac
-    shift
-  done
-
-  [[ -z "$target" ]] && die "usage: gs move --onto <target>"
-  branch_exists "$target" || die "branch '$target' does not exist"
-
-  local cur
-  cur="$(current_branch)"
-  is_tracked "$cur" || die "'$cur' is not tracked by gs"
-
-  local old_parent
-  old_parent="$(get_parent "$cur")"
-
-  # Rebase current branch onto target
-  info "rebasing '$cur' onto '$target'..."
-  git rebase --onto "$target" "$old_parent" "$cur" --quiet || {
-    die "rebase failed — resolve conflicts, then update metadata manually"
-  }
-
-  # Update metadata
-  set_parent "$cur" "$target"
-  set_base_oid "$cur" "$(git rev-parse "$target")"
-
-  # Restack upstack
-  info "restacking upstack branches..."
-  restack_upstack "$cur"
-
-  success "moved '$cur' onto '$target'"
-}
-
-# Splice a new branch between an existing parent and child — the "I forgot to
-# make this its own branch" case. Equivalent to:
-#   gs co <parent> && gs create <name> && gs co <child> && gs move --onto <name>
-# but done as one step, and it validates that <child>'s current parent really
-# is <parent> first (otherwise this would silently reparent the wrong thing).
-cmd_insert() {
-  ensure_gs_init
-  local name="" parent="" child=""
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --between)
-        shift
-        parent="${1:-}"; shift
-        child="${1:-}"
-        [[ -z "$parent" || -z "$child" ]] && die "--between requires two branches: <parent> <child>"
-        ;;
-      -*) die "unknown flag: $1" ;;
-      *)  name="$1" ;;
-    esac
-    shift
-  done
-
-  [[ -z "$name" ]] && die "usage: gs insert <name> --between <parent> <child>"
-  [[ -z "$parent" || -z "$child" ]] && die "usage: gs insert <name> --between <parent> <child>"
-  branch_exists "$name" && die "branch '$name' already exists"
-
-  local trunk
-  trunk="$(trunk_branch)"
-  if [[ "$parent" != "$trunk" ]]; then
-    branch_exists "$parent" || die "branch '$parent' does not exist"
-  fi
-  branch_exists "$child" || die "branch '$child' does not exist"
-  is_tracked "$child" || die "'$child' is not tracked by gs"
-
-  local actual_parent
-  actual_parent="$(get_parent "$child" 2>/dev/null)" || actual_parent=""
-  [[ "$actual_parent" == "$parent" ]] || die "'$child' is stacked on '$actual_parent', not '$parent' — use 'gs move --onto' if you want to reparent it"
-
-  local original
-  original="$(current_branch)"
-
-  # Create the new branch off parent, same as `gs create` would.
-  git checkout "$parent" --quiet
-  git checkout -b "$name" --quiet
-  track_branch "$name" "$parent"
-
-  # Save child's pre-rebase tip so restack_upstack has a real fork point for
-  # child's own descendants (same convention restack_upstack itself uses —
-  # without this the next restack would fall back to merge-base and warn).
-  local tips_dir
-  tips_dir="$(gs_dir)/old_tips"
-  mkdir -p "$tips_dir"
-  git rev-parse "$child" > "$tips_dir/$(encode_branch "$child")"
-
-  # Splice child onto the new branch. name currently == parent's tip, so
-  # rebasing with upstream=parent, onto=name replays child's commits unchanged.
-  info "rebasing '$child' onto '$name'..."
-  git rebase --onto "$name" "$parent" "$child" --quiet || {
-    die "rebase failed — resolve conflicts, run 'git rebase --continue', then 'gs restack --all' to fix up metadata and descendants"
-  }
-  set_parent "$child" "$name"
-  set_base_oid "$child" "$(git rev-parse "$name")"
-
-  info "restacking descendants of '$child'..."
-  restack_upstack "$child"
-  cleanup_restack_tips
-
-  git checkout "$name" --quiet 2>/dev/null || true
-  success "inserted '$name' between '$parent' and '$child'"
-}
-
-# Remove a branch from gs tracking without deleting the git branch.
-# Children get reparented to this branch's parent.
-cmd_untrack() {
-  ensure_gs_init
-  local branch="${1:-$(current_branch)}"
-
-  is_tracked "$branch" || die "'$branch' is not tracked by gs"
-
-  local parent
-  parent="$(get_parent "$branch")"
-
-  # Reparent children to this branch's parent
-  local children
-  children="$(get_children "$branch")"
-  for child in $children; do
-    set_parent "$child" "$parent"
-    info "reparented '$child' to '$parent'"
-  done
-
-  remove_tracking "$branch"
-  success "untracked '$branch' (git branch still exists)"
-}
-
-# Squash-merge current branch into its parent, delete it, reparent children, restack.
-cmd_fold() {
-  ensure_gs_init
-  local cur
-  cur="$(current_branch)"
-
-  is_tracked "$cur" || die "'$cur' is not tracked by gs"
-
-  local parent
-  parent="$(get_parent "$cur")"
-  local trunk
-  trunk="$(trunk_branch)"
-
-  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
-    echo -e "${CYAN}[dry-run]${RESET} would squash-merge '${YELLOW}$cur${RESET}' into '$parent'"
-    local children
-    children="$(get_children "$cur")"
-    for child in $children; do
-      echo "  would reparent '$child' to '$parent'"
-    done
-    echo "  would delete branch '$cur' and restack children"
-    return 0
-  fi
-
-  [[ "$parent" == "$trunk" ]] && [[ "$cur" == "$trunk" ]] && die "cannot fold trunk"
-
-  local children
-  children="$(get_children "$cur")"
-
-  # Switch to parent and merge current branch
-  git checkout "$parent" --quiet
-  info "merging '$cur' into '$parent'..."
-  git merge --squash "$cur" --quiet
-  if git commit --no-edit --quiet 2>/dev/null; then
-    # Keep each child's recorded fork at the folded branch's old tip until
-    # restack succeeds. Only the parent name changes at this point.
-    for child in $children; do
-      set_parent "$child" "$parent"
-      info "reparented '$child' to '$parent'"
-    done
-
-    # Only delete if the commit succeeded
-    git branch -D "$cur" --quiet 2>/dev/null
-    remove_tracking "$cur"
-
-    # Restack children
-    restack_upstack "$parent"
-
-    success "folded '$cur' into '$parent'"
-  else
-    warn "staged merge changes on '$parent' — commit manually, then run 'gs restack --all'. Branch '$cur' was NOT deleted."
-    return 1
-  fi
-}
-
-# Split the current branch at a commit: everything after <commit> becomes a new
-# child branch, and the current branch is reset to <commit>.
-cmd_split() {
-  ensure_gs_init
-  local commit="$1"
-  local new_name="$2"
-
-  [[ -z "$commit" || -z "$new_name" ]] && die "usage: gs split <commit> <new-branch-name>"
-
-  git rev-parse --verify "$commit" &>/dev/null || die "'$commit' is not a valid commit"
-
-  local cur
-  cur="$(current_branch)"
-  is_tracked "$cur" || die "'$cur' is not tracked by gs"
-  branch_exists "$new_name" && die "branch '$new_name' already exists"
-
-  local parent
-  parent="$(get_parent "$cur" 2>/dev/null)" || parent="$(trunk_branch)"
-
-  # Validate the split commit is in the right range
-  git merge-base --is-ancestor "$commit" HEAD 2>/dev/null || die "'$commit' is not an ancestor of HEAD"
-  [[ "$(git rev-parse "$commit")" == "$(git rev-parse HEAD)" ]] && die "split commit is HEAD — nothing to split"
-  [[ "$(git rev-parse "$commit")" == "$(git rev-parse "$parent")" ]] && die "split commit is same as parent '$parent' — nothing to keep"
-
-  local children
-  children="$(get_children "$cur")"
-
-  # Create the Git branch and reset first. Metadata changes only after both
-  # Git operations succeed.
-  git branch "$new_name" HEAD --quiet
-  git reset --hard "$commit" --quiet
-  track_branch "$new_name" "$cur"
-
-  # Reparent former children to the new branch (it's now the tip)
-  for child in $children; do
-    set_parent "$child" "$new_name"
-    set_base_oid "$child" "$(git rev-parse "$new_name")"
-    info "reparented '$child' to '$new_name'"
-  done
-
-  success "split '$cur' at $(git rev-parse --short "$commit"): new branch '$new_name'"
 }
 
 # Push from current branch down through the stack to trunk (force-with-lease).
@@ -1310,102 +759,6 @@ collect_descendants_bfs() {
   printf '%s\n' "${out[@]}"
 }
 
-# Merge the PR for the bottommost branch (or the named branch) and clean up locally.
-# Defaults to squash-merge. Use --merge or --rebase to override.
-cmd_land() {
-  ensure_gs_init
-  local branch=""
-  local strategy="--squash"
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --squash) strategy="--squash" ;;
-      --merge)  strategy="--merge" ;;
-      --rebase) strategy="--rebase" ;;
-      -*) die "unknown flag: $1" ;;
-      *) branch="$1" ;;
-    esac
-    shift
-  done
-
-  if [[ -z "$branch" ]]; then
-    branch="$(find_bottom "$(current_branch)")"
-    [[ -z "$branch" ]] && die "could not determine bottom branch"
-  fi
-
-  is_tracked "$branch" || die "'$branch' is not tracked by gs"
-
-  if ! command -v gh &>/dev/null; then
-    die "gh CLI is required for 'gs land'"
-  fi
-
-  # Check PR exists and review status
-  local pr_state
-  pr_state="$(gh pr view "$branch" --json state --jq '.state' 2>/dev/null)" || pr_state=""
-  [[ -n "$pr_state" ]] || die "no PR found for '$branch'"
-  [[ "$pr_state" == "OPEN" ]] || die "PR for '$branch' is not open (state: ${pr_state})"
-
-  local review
-  review="$(gh pr view "$branch" --json reviewDecision --jq '.reviewDecision' 2>/dev/null)" || review=""
-  case "$review" in
-    APPROVED) ;;
-    "") ;; # no review requirements on the repo — let gh pr merge handle it
-    CHANGES_REQUESTED) die "PR for '$branch' has changes requested — cannot land" ;;
-    REVIEW_REQUIRED)  die "PR for '$branch' still needs review approval" ;;
-  esac
-
-  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
-    local parent
-    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$(trunk_branch)"
-    echo -e "${CYAN}[dry-run]${RESET} would merge PR for '${YELLOW}$branch${RESET}' into '$parent' ($strategy)"
-    [[ "$review" == "APPROVED" ]] && echo "  review: ${GREEN}APPROVED${RESET}"
-    echo "  would pull trunk and rebase children past merged commits"
-    echo "  would delete local branch '$branch'"
-    return 0
-  fi
-
-  local trunk parent
-  trunk="$(trunk_branch)"
-  parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
-
-  info "merging PR for '$branch' into '$parent' ($strategy)..."
-  if ! gh pr merge "$branch" "$strategy" --delete-branch 2>&1 | sed 's/^/  /'; then
-    die "failed to merge PR for '$branch'"
-  fi
-
-  # Pull trunk to get the merge commit
-  git checkout "$trunk" --quiet
-  git pull --ff-only --quiet || die "could not fast-forward '$trunk'"
-
-  # Snapshot the merged branch tip before deletion so children skip its commits
-  local merged_tip
-  merged_tip="$(git rev-parse "$branch" 2>/dev/null)" || merged_tip=""
-
-  # Reparent children and rebase past the merged commits
-  local children
-  children="$(get_children "$branch")"
-  for child in $children; do
-    set_parent "$child" "$parent"
-    info "reparented '$child' onto '$parent'"
-
-    if [[ -n "$merged_tip" ]] && branch_exists "$child"; then
-      if git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
-        info "  rebased '$child' past merged commits"
-      else
-        warn "conflict rebasing '$child' onto '$parent' — resolve manually, then run 'gs restack --all'"
-      fi
-    fi
-  done
-
-  # Delete the merged branch locally
-  remove_tracking "$branch"
-  if branch_exists "$branch"; then
-    git branch -D "$branch" --quiet 2>/dev/null
-  fi
-
-  success "landed '$branch' into '$parent'"
-}
-
 # Find the bottommost branch in the stack path leading to the given branch.
 find_bottom() {
   local cur="$1"
@@ -1419,228 +772,6 @@ find_bottom() {
     cur="$parent"
   done
   echo "$cur"
-}
-
-# Pull trunk, drop merged branches, and restack the rest onto trunk.
-# By default only operates on the current stack (bottom of current branch's
-# stack and all its descendants) to avoid clashing with unrelated stacks.
-# Use --all to sync every tracked branch.
-cmd_sync() {
-  ensure_gs_init
-  local scope="current"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --all)     scope="all" ;;
-      --current) scope="current" ;;
-      *) die "unknown argument: $1" ;;
-    esac
-    shift
-  done
-
-  local trunk
-  trunk="$(trunk_branch)"
-  local original
-  original="$(current_branch)"
-
-  # Determine the BFS root. --all walks from trunk; --current walks from the
-  # bottom of the stack the user is currently on. If the user is on trunk we
-  # have no current stack, so fall back to --all.
-  local sync_root="$trunk"
-  if [[ "$scope" == "current" ]]; then
-    if [[ "$original" == "$trunk" ]]; then
-      die "on trunk — no current stack to sync. Switch to a stacked branch, or pass --all."
-    elif is_tracked "$original"; then
-      sync_root="$(find_bottom "$original")"
-      info "syncing current stack rooted at '$sync_root'"
-    else
-      die "current branch '$original' is not tracked. Switch to a stacked branch, or pass --all."
-    fi
-  fi
-
-  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
-    echo -e "${CYAN}[dry-run]${RESET} would fetch, pull trunk, and check for merged PRs..."
-    local all_branches=()
-    if [[ "$sync_root" == "$trunk" ]]; then
-      while IFS= read -r b; do
-        [[ -n "$b" ]] && all_branches+=("$b")
-      done <<< "$(collect_descendants_bfs "$trunk")"
-    else
-      all_branches+=("$sync_root")
-      while IFS= read -r b; do
-        [[ -n "$b" ]] && all_branches+=("$b")
-      done <<< "$(collect_descendants_bfs "$sync_root")"
-    fi
-    local found=0
-    for branch in "${all_branches[@]}"; do
-      branch_exists "$branch" || continue
-      if branch_is_merged "$branch"; then
-        echo "  ${YELLOW}would delete${RESET} merged branch '$branch'"
-        found=1
-      fi
-    done
-    [[ $found -eq 0 ]] && echo "  no merged branches found"
-    echo "  ${YELLOW}would restack${RESET} remaining branches under '$sync_root'"
-    return 0
-  fi
-
-  info "fetching from origin..."
-  git fetch origin --prune --quiet
-
-  info "updating trunk '$trunk'..."
-  git checkout "$trunk" --quiet
-  git pull --ff-only --quiet || die "could not fast-forward '$trunk'. Resolve manually and retry."
-
-  # Walk tracked branches in BFS order from the chosen root.
-  local all_branches=()
-  if [[ "$sync_root" == "$trunk" ]]; then
-    while IFS= read -r b; do
-      [[ -n "$b" ]] && all_branches+=("$b")
-    done <<< "$(collect_descendants_bfs "$trunk")"
-  else
-    all_branches+=("$sync_root")
-    while IFS= read -r b; do
-      [[ -n "$b" ]] && all_branches+=("$b")
-    done <<< "$(collect_descendants_bfs "$sync_root")"
-  fi
-
-  if [[ ${#all_branches[@]} -eq 0 ]]; then
-    success "no tracked branches; nothing to sync"
-    return 0
-  fi
-
-  info "checking ${#all_branches[@]} tracked branch(es) for merged PRs..."
-
-  # Detect merged branches. Process in BFS order so when we reparent a merged
-  # branch's children to its parent, the parent has already been resolved if it
-  # was also merged (its children were lifted to its grandparent earlier).
-  local merged=()
-  for branch in "${all_branches[@]}"; do
-    branch_exists "$branch" || continue
-    if branch_is_merged "$branch"; then
-      info "  '$branch' is merged"
-      merged+=("$branch")
-    fi
-  done
-
-  if [[ ${#merged[@]} -eq 0 ]]; then
-    info "no merged branches to clean up"
-  else
-    # Snapshot all merged branch tips before any rebasing or deletion.
-    # After squash-merge, the squashed commit in trunk has new SHAs — the
-    # merged branch's tip is the correct fork point for its children so
-    # only the children's own commits get rebased.
-    local tips_dir
-    tips_dir="$(gs_dir)/old_tips"
-    mkdir -p "$tips_dir"
-    for branch in "${merged[@]}"; do
-      branch_exists "$branch" || continue
-      local tip
-      tip="$(git rev-parse "$branch" 2>/dev/null)" || tip=""
-      if [[ -n "$tip" ]]; then
-        echo "$tip" > "$tips_dir/sync_merged_$(encode_branch "$branch")"
-      fi
-    done
-
-    for branch in "${merged[@]}"; do
-      local parent
-      parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
-
-      local merged_tip
-      merged_tip="$(cat "$tips_dir/sync_merged_$(encode_branch "$branch")" 2>/dev/null)" || merged_tip=""
-
-      # Reparent children and rebase them past the merged branch's commits.
-      # Children that are also merged don't need rebasing — they'll be deleted.
-      local children
-      children="$(get_children "$branch")"
-      for child in $children; do
-        set_parent "$child" "$parent"
-        info "reparented '$child' onto '$parent'"
-
-        if [[ -n "$merged_tip" ]] && branch_exists "$child"; then
-          if is_in_list "$child" "${merged[@]}"; then
-            info "  '$child' is also merged, skipping rebase"
-          elif git rebase --onto "$parent" "$merged_tip" "$child" --quiet 2>/dev/null; then
-            info "  rebased '$child' past merged commits"
-          else
-            warn "conflict rebasing '$child' onto '$parent' — resolve manually, then run 'gs restack --all'"
-          fi
-        fi
-      done
-
-      remove_tracking "$branch"
-      if branch_exists "$branch"; then
-        git branch -D "$branch" --quiet 2>/dev/null || warn "could not delete branch '$branch'"
-      fi
-      success "deleted merged branch '$branch'"
-    done
-  fi
-
-  # Restack what's left. Direct children of merged branches were already
-  # rebased above (skipping the merged commits), so restack_upstack will
-  # see them as up-to-date and only recurse into deeper descendants.
-  info "restacking remaining branches under '$sync_root'..."
-  restack_upstack "$sync_root"
-  cleanup_restack_tips
-
-  if branch_exists "$original"; then
-    git checkout "$original" --quiet
-  else
-    info "original branch '$original' was deleted; staying on '$trunk'"
-  fi
-
-  success "sync complete"
-}
-
-# Delete a branch from both git and gs tracking. Reparents children to parent.
-cmd_delete() {
-  ensure_gs_init
-  local branch="${1:-$(current_branch)}"
-  local trunk
-  trunk="$(trunk_branch)"
-
-  [[ "$branch" == "$trunk" ]] && die "cannot delete trunk branch"
-
-  if [[ "${GS_DRY_RUN:-0}" == "1" ]]; then
-    echo -e "${CYAN}[dry-run]${RESET} would delete branch '${YELLOW}$branch${RESET}'"
-    local parent
-    parent="$(get_parent "$branch" 2>/dev/null)" || parent="$trunk"
-    local children
-    children="$(get_children "$branch")"
-    for child in $children; do
-      echo "  would reparent '$child' to '$parent'"
-    done
-    return 0
-  fi
-
-  local cur
-  cur="$(current_branch)"
-
-  if is_tracked "$branch"; then
-    local parent
-    parent="$(get_parent "$branch")"
-
-    # Reparent children
-    local children
-    children="$(get_children "$branch")"
-    for child in $children; do
-      set_parent "$child" "$parent"
-      info "reparented '$child' to '$parent'"
-    done
-
-    remove_tracking "$branch"
-
-    # If we're on the branch being deleted, move to parent
-    if [[ "$cur" == "$branch" ]]; then
-      git checkout "$parent" --quiet
-    fi
-  else
-    if [[ "$cur" == "$branch" ]]; then
-      git checkout "$trunk" --quiet
-    fi
-  fi
-
-  git branch -D "$branch" 2>/dev/null
-  success "deleted branch '$branch'"
 }
 
 # Diff current branch against its parent (default) or a specified branch.
@@ -1658,41 +789,6 @@ cmd_diff() {
   fi
 
   git diff "$target"...HEAD
-}
-
-# Rename the current branch (or a specified branch) to a new name.
-cmd_rename() {
-  ensure_gs_init
-  local new_name="${1:-}"
-  [[ -z "$new_name" ]] && die "usage: gs rename <new-name>"
-
-  local cur
-  cur="$(current_branch)"
-  local trunk
-  trunk="$(trunk_branch)"
-  [[ "$cur" == "$trunk" ]] && die "cannot rename trunk branch"
-
-  # Rename the git branch
-  git branch -m "$cur" "$new_name"
-
-  # Update gs tracking: transfer parent to new name
-  if is_tracked "$cur"; then
-    local parent old_base
-    parent="$(get_parent "$cur")"
-    old_base="$(get_base_oid "$cur" 2>/dev/null || true)"
-    set_parent "$new_name" "$parent"
-    [[ -n "$old_base" ]] && set_base_oid "$new_name" "$old_base"
-    remove_tracking "$cur"
-  fi
-
-  # Reparent any children that pointed to the old name
-  local children
-  children="$(get_children "$cur")"
-  for child in $children; do
-    set_parent "$child" "$new_name"
-  done
-
-  success "renamed '$cur' to '$new_name'"
 }
 
 # Open the PR for the current branch in the browser.
@@ -1749,8 +845,7 @@ HELP
 
 # ── Main dispatch ───────────────────────────────────────────────────────────
 
-# Load the shared worktree engine after the legacy definitions so these
-# functions replace the old single-worktree implementations.
+# The worktree-aware commands live in gs-worktree.sh.
 GS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=gs-worktree.sh
 source "$GS_SCRIPT_DIR/gs-worktree.sh"
@@ -1765,6 +860,10 @@ main() {
     cmd="${1:-help}"
     shift 2>/dev/null || true
   fi
+
+  # Empty outside a git repo. ensure_git_repo reports that per command, so
+  # `gs help` still works anywhere.
+  GS_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 
   guard_command_against_active_operation "$cmd" "${1:-}"
   acquire_mutation_lock "$cmd"
