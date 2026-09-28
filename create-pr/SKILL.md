@@ -21,11 +21,11 @@ Also: no generated-by footers, no `Co-Authored-By` trailers, no emoji labels, an
 
 A good PR description starts with the situation and approach. Explain what exists today, why that is a problem, and how the PR addresses it. This opening should stand on its own. Do not state the problem, add a label, and then restart with "This PR fixes that case."
 
-Follow the opening with concrete bullets when they help a reviewer understand what was built. Do not add a heading or label just to introduce the bullets. Each bullet should say what the piece does, not just that it exists. Use prose when the change is one cohesive thing that does not need a list.
+Follow the opening with concrete bullets when they help a reviewer understand what was built. Do not add a heading or label just to introduce the bullets. Each bullet is one short line that names a piece at the level a teammate would say out loud. Say what it is, not how it works. Leave out function names, header names, status codes, state transitions, and config values unless the reviewer must act on them. If a bullet needs a second sentence, it is too detailed. Use prose when the change is one cohesive thing that does not need a list.
 
-If a reviewer would trip over something (a tradeoff, a surprising decision, something that looks wrong but isn't, a dependency on other work), mention it. If nothing like that applies, stop after the two parts above.
+If a reviewer would get something wrong without being told (a tradeoff, a surprising decision, something that looks wrong but isn't, a dependency on other work), mention it in one sentence. Mention at most two such things. A harmless behavior change that the diff already shows does not count. If nothing like that applies, stop after the two parts above.
 
-Match detail to the change. A one-line fix gets one or two sentences. A multi-file feature can use a fuller opening and short sections when that makes the change easier to understand.
+Size the description to the number of ideas, not the number of files. A one-line fix gets one or two sentences. By default, write an opening of two or three sentences and at most four bullets, even for a large PR. Go past this only when the user asks for more detail.
 
 Add sections only when the PR contains distinct concerns that are easier to review separately. Use short bold labels, not Markdown headings. Do not add generic labels such as **What changed**. Separate main behavior, shared infrastructure, and local tooling only when the split improves the description. It is fine to fold them together.
 
@@ -78,6 +78,8 @@ Rewrite anything that reads like these:
 - Defending a rejected alternative at length. The reviewer needs the decision, not the debate.
 - Any sentence you would not say out loud to a colleague at their desk.
 - Pure motivation with no concrete detail. "We needed better X so this improves X" tells the reviewer nothing about what they're about to look at.
+- Bullets that explain how a piece works: headers, status codes, endpoints, state transitions, config values. Say what the piece is and let the diff show how.
+- A separate paragraph for each side effect or config change. Most of them belong in the diff, not the description.
 - Pure mechanics with no context. A bullet list of file names or function names without saying why any of it exists.
 
 ## Language checklist
@@ -101,7 +103,7 @@ Before finalizing, scan for and fix:
 4. **Verify the base and remote branch.** Confirm the base (usually `main`) and that the branch's upstream is not the base itself. Push explicitly: `git push -u origin HEAD:<branch>`.
 5. **Stage deliberately.** Only files belonging to this change. Leave unrelated dirty files and user-added debug logging alone; mention them instead of reverting.
 6. **Write the body to a temp file** — `mktemp -t pr-body` or `/tmp/pr-body-<branch>.md` — then pass `--body-file`. Use `/tmp` rather than the repo's `local/`.
-7. **Reread the body as rendered prose.** Confirm that it tells one connected story and that any bold sections separate distinct concerns. Remove generic or unnecessary labels before publishing.
+7. **Reread the body as rendered prose.** Confirm that it tells one connected story and that any bold sections separate distinct concerns. Remove generic or unnecessary labels before publishing. Then cut every sentence the reviewer would learn from the diff in under a minute.
 8. **Create it:** `gh pr create --draft --base <base> --title "<TICKET-123> <summary>" --body-file <path>`. Use `gh`, never a web/MCP route. Default to `--draft` unless the user says ready. In sandboxed environments request escalation up front.
 9. **Verify and report:** `gh pr view <n> --json number,isDraft,state,baseRefName,url`. Report the URL and draft state.
 
