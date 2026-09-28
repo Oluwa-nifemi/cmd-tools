@@ -5,7 +5,7 @@ set -eu
 REPL_CACHE_DIR="${HOME}/.cache/zed-clojure-repl"
 REPL_REGISTRY="${REPL_CACHE_DIR}/registry.json"
 REPL_LOCK_DIR="${REPL_CACHE_DIR}/locks"
-REPL_START_TIMEOUT=120
+REPL_START_TIMEOUT="${ZED_CLOJURE_REPL_START_SECONDS:-240}"
 REPL_EVAL_TIMEOUT=10
 # How long a caller waits on another process's startup lock before failing,
 # and how long an ownerless lock (starter died before writing its PID) may

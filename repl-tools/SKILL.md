@@ -104,11 +104,13 @@ time debugging that session. Kill it with `killrepl`, start a clean one with
 `startrepl`, reload the required namespaces, and retry once. If the fresh
 REPL also fails, report the concrete failure.
 
-Starting a REPL takes up to 120s. Let the invocation that started it finish.
+Starting a REPL can take up to 240s on a busy machine
+(`ZED_CLOJURE_REPL_START_SECONDS`). A normal startup still returns once it is
+ready, and a failed startup returns at once. Let the invocation that started it finish.
 Do not run a second `startrepl` or `runrepl` for the same project while it is
-running. A second caller waits on the startup lock for the same 120s
+running. A second caller waits on the startup lock for the same 240s
 (`ZED_CLOJURE_REPL_LOCK_WAIT_SECONDS`), then fails with the lock path and
-owner PID. Give the command at least 130s before your tool call times out, or
+owner PID. Give the command at least 250s before your tool call times out, or
 you will not see that error.
 
 If startup or the lock wait times out, run `killrepl --force` for that
