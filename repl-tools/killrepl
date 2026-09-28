@@ -55,7 +55,7 @@ clear_startup_lock() {
     owner="$(cat "$lock_path/pid" 2>/dev/null || true)"
     child="$(cat "$lock_path/child_pid" 2>/dev/null || true)"
     if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$force" = false ]; then
-        age=$(( $(date +%s) - $(stat -f %m "$lock_path") ))
+        age="$(python3 -c 'import os, sys, time; print(int(time.time() - os.path.getmtime(sys.argv[1])))' "$lock_path")"
         command="$(ps -o command= -p "$owner" 2>/dev/null || true)"
         echo "killrepl: REPL startup for $name is in progress; lock=$lock_path owner-pid=$owner age=${age}s command=${command:-unknown}" >&2
         echo "Run 'killrepl --force' to stop it and clear the lock." >&2

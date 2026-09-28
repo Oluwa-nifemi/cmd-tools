@@ -10,7 +10,6 @@
 # attribute" — which reads like a broken REPL rather than an exhausted pool.
 set -eu
 
-container="${PGSLOTS_CONTAINER:-ardoq_postgres_1}"
 idle_minutes="${PGSLOTS_IDLE_MINUTES:-1}"
 
 usage() {
@@ -38,7 +37,20 @@ psql_run() {
         -d "${PGSLOTS_DB:-ardoq}" "$@" 2>&1
 }
 
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
+if ! running="$(docker ps --format '{{.Names}}' 2>&1)"; then
+    echo "pgslots: cannot list Docker containers: $running" >&2
+    exit 1
+fi
+
+# Compose v1 names containers ardoq_postgres_1; Compose v2 uses ardoq-postgres-1.
+if [ -n "${PGSLOTS_CONTAINER:-}" ]; then
+    container="$PGSLOTS_CONTAINER"
+else
+    container="$(printf '%s\n' "$running" | grep -xE 'ardoq[_-]postgres[_-]1' | head -n 1 || true)"
+    container="${container:-ardoq_postgres_1}"
+fi
+
+if ! printf '%s\n' "$running" | grep -qx "$container"; then
     echo "Postgres container '$container' is not running." >&2
     echo "Set PGSLOTS_CONTAINER if it has a different name." >&2
     exit 1

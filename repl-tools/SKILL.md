@@ -117,3 +117,15 @@ If startup or the lock wait times out, run `killrepl --force` for that
 project. It stops the REPL, or a startup that has not registered yet, and
 clears the startup lock. Then run `startrepl` once, reload the namespaces, and
 retry once. If that also fails, report the error and stop.
+
+## Heap limit
+
+Every Leiningen REPL gets a 4 GB heap from `:jvm-opts ["-Xmx4g"]` in
+`~/.lein/profiles.clj`. It was sized from measurements: a heavy test
+namespace peaked at about 2.9 GB, with 0.6 GB live after garbage collection.
+
+If a test, `(go)` or an evaluation fails with `java.lang.OutOfMemoryError`,
+first rule out a runaway result, such as printing a huge collection. If the
+work is legitimate, change `-Xmx4g` to `-Xmx6g` in that file. Then run
+`killrepl` and `startrepl`, because a running REPL keeps its old limit. Tell
+the user you raised it.

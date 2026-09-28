@@ -25,7 +25,26 @@ def process_group(process_id: str) -> str:
     return output(["ps", "-o", "pgid=", "-p", process_id]).strip()
 
 
+def is_java(command: str) -> bool:
+    # macOS ps reports the full path in comm; Linux reports only "java".
+    return command == "java" or command.endswith("/java")
+
+
 def footprint(process_id: str) -> tuple[float, str] | None:
+    if sys.platform.startswith("linux"):
+        # Linux has no vmmap; VmRSS is the closest equivalent to the footprint.
+        try:
+            with open(f"/proc/{process_id}/status") as handle:
+                match = re.search(r"^VmRSS:\s+(\d+) kB", handle.read(), re.MULTILINE)
+        except OSError:
+            return None
+        if not match:
+            return None
+        megabytes = int(match.group(1)) / 1024
+        if megabytes >= 1024:
+            return megabytes, f"{megabytes / 1024:.1f}G"
+        return megabytes, f"{megabytes:.0f}M"
+
     match = re.search(
         r"^Physical footprint:\s+(\S+)",
         output(["vmmap", "-summary", process_id]),
@@ -95,7 +114,7 @@ for worktree, entry in registry.items():
     measurements = [
         footprint(process_id)
         for process_id, command in processes_by_group.get(group, [])
-        if command.endswith("/java")
+        if is_java(command)
     ]
     total = sum(measurement[0] for measurement in measurements if measurement)
     rows.append((total, "REPL", worktree, group, "yes" if group in listener_groups else "no"))
@@ -104,7 +123,7 @@ for worktree, entry in registry.items():
 # project Zed used when it launched the server, which exposes stale servers.
 for processes in processes_by_group.values():
     for process_id, command in processes:
-        if not command.endswith("/java"):
+        if not is_java(command):
             continue
         if "clojure-lsp-standalone.jar" not in output(
             ["ps", "-p", process_id, "-o", "command="]
