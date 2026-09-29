@@ -875,7 +875,7 @@ cmd_create() {
 
 cmd_track() {
   ensure_gs_init
-  local onto="" trunk parent initial_parent b fork i
+  local onto="" trunk parent b fork i
   local branches=() parents=() forks=() old_oids=() completed=() affected=() descendants=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -889,7 +889,6 @@ cmd_track() {
 
   trunk="$(trunk_branch)"
   parent="${onto:-$trunk}"
-  initial_parent="$parent"
   [[ "$parent" == "$trunk" ]] || branch_exists "$parent" || die "branch '$parent' does not exist"
 
   # Capture every fork before any lower branch can be rewritten. A recorded
@@ -938,7 +937,7 @@ cmd_track() {
   done
 
   info "restacking tracked branches..."
-  restack_upstack "$initial_parent"
+  restack_upstack "${branches[0]}"
   success "tracked ${#branches[@]} branch(es)"
 }
 
@@ -1291,7 +1290,7 @@ cmd_sync() {
     shift
   done
 
-  local trunk original sync_root branch child parent merged_tip owner
+  local trunk original sync_root branch child parent merged_tip owner sync_plan
   trunk="$(trunk_branch)"
   original="$(current_branch)"
   sync_root="$trunk"
@@ -1373,15 +1372,22 @@ cmd_sync() {
   [[ $cleanup_failed -eq 0 ]] || die "sync cleanup is incomplete; resolve the reported worktree and retry"
 
   info "restacking remaining branches under '$sync_root'..."
-  if [[ "$sync_root" == "$trunk" ]] || ! is_in_list "$sync_root" "${merged[@]}"; then
+  if [[ "$scope" == "all" ]]; then
     restack_upstack "$sync_root"
   else
+    sync_plan="$(mktemp "${TMPDIR:-/tmp}/gs-sync-plan.XXXXXX")"
     for branch in "${all_branches[@]}"; do
       branch_exists "$branch" || continue
       is_tracked "$branch" || continue
       parent="$(get_parent "$branch" 2>/dev/null || true)"
-      is_in_list "$parent" "${all_branches[@]}" || restack_upstack "$branch"
+      if ! is_in_list "$parent" "${all_branches[@]}"; then
+        printf '%s\t%s\n' "$branch" "$parent" >> "$sync_plan"
+        collect_restack_plan "$branch" >> "$sync_plan"
+      fi
     done
+    prepare_restack_operation "$sync_root" 0 "$sync_plan"
+    rm -f "$sync_plan"
+    execute_restack_steps
   fi
   cleanup_restack_tips
 

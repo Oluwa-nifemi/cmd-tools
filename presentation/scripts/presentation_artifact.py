@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = {
     "deck": ROOT / "template.html",
     "page": ROOT / "page-template.html",
+    "interactive": ROOT / "interactive-template.html",
 }
 REQUIRED = {
     "deck": (
@@ -37,13 +39,28 @@ REQUIRED = {
         'id="long-png-link"',
         "break-before: page",
     ),
+    "interactive": (
+        '<base target="_blank"',
+        'id="stage"',
+        'id="story"',
+        'id="honesty"',
+        'data-depth="overview"',
+        'id="explore-btn"',
+        "window.Stage",
+    ),
 }
 TEMPLATE_INSTRUCTION_TEXT = (
+    "INTERACTIVE TEMPLATE",
     "PRESENTATION TEMPLATE",
     "HOW TO USE:",
     "replace everything between START and END",
     "Example slide — delete me",
+    "Example chapter — delete me",
 )
+VOID_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "source", "track", "wbr",
+}
 
 
 class ArtifactHTMLParser(HTMLParser):
@@ -55,6 +72,14 @@ class ArtifactHTMLParser(HTMLParser):
         self.visible_text: list[str] = []
         self.ids: list[str] = []
         self._hidden_depth = 0
+        self.chapters: list[dict] = []
+        self.stray_details = 0
+        self._chapter_depth = 0
+        self._claim_depth = 0
+        self._open: list[str] = []
+        self.nodes: list[dict] = []
+        self.openers: list[str] = []
+        self._node_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tag_counts[tag] = self.tag_counts.get(tag, 0) + 1
@@ -63,16 +88,86 @@ class ArtifactHTMLParser(HTMLParser):
             self.ids.append(attrs_dict["id"] or "")
         if tag in {"script", "style"}:
             self._hidden_depth += 1
+        classes = (attrs_dict.get("class") or "").split()
+        if attrs_dict.get("data-open-node"):
+            self.openers.append(attrs_dict["data-open-node"] or "")
+        if tag in VOID_TAGS:
+            return
+        self._open.append(tag)
+        if tag == "article" and "chapter" in classes:
+            self.chapters.append({"claim": ""})
+            self._chapter_depth = len(self._open)
+        elif tag == "article" and "node" in classes:
+            self.nodes.append({"id": attrs_dict.get("data-node") or "", "parent": attrs_dict.get("data-parent"), "claim": ""})
+            self._node_depth = len(self._open)
+        elif (self._chapter_depth or self._node_depth) and "claim" in classes and not self._claim_depth:
+            self._claim_depth = len(self._open)
+        if tag == "details" and "deeper" not in classes:
+            self.stray_details += 1
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style"} and self._hidden_depth:
             self._hidden_depth -= 1
+        if tag in VOID_TAGS or tag not in self._open:
+            return
+        while self._open:
+            depth = len(self._open)
+            closed = self._open.pop()
+            if depth == self._claim_depth:
+                self._claim_depth = 0
+            if depth == self._chapter_depth:
+                self._chapter_depth = 0
+            if depth == self._node_depth:
+                self._node_depth = 0
+            if closed == tag:
+                break
 
     def handle_data(self, data: str) -> None:
         if not self._hidden_depth:
             stripped = data.strip()
             if stripped:
                 self.visible_text.append(stripped)
+                if self._claim_depth and self._node_depth and self.nodes:
+                    self.nodes[-1]["claim"] += stripped
+                elif self._claim_depth and self.chapters:
+                    self.chapters[-1]["claim"] += stripped
+
+
+def node_failures(nodes: list[dict], openers: list[str]) -> list[str]:
+    if not nodes:
+        return []
+    failures = []
+    ids = [node["id"] for node in nodes]
+    for node_id in ids:
+        if not re.fullmatch(r"[a-z0-9-]+", node_id):
+            failures.append(f"node id {node_id or '(empty)'} must use lowercase letters, digits, and hyphens")
+    for node_id in sorted({i for i in ids if ids.count(i) > 1}):
+        failures.append(f"duplicate node id {node_id}")
+    known = set(ids)
+    roots = [node["id"] for node in nodes if not node["parent"]]
+    if len(roots) != 1:
+        failures.append(f"exactly one root node (no data-parent), found {len(roots)}")
+    children: dict[str, list[str]] = {}
+    for node in nodes:
+        if node["parent"]:
+            if node["parent"] not in known:
+                failures.append(f"node {node['id']} has unknown parent {node['parent']}")
+            children.setdefault(node["parent"], []).append(node["id"])
+        if not node["claim"]:
+            failures.append(f"node {node['id']} needs a visible claim")
+    reached: set[str] = set()
+    pending = list(roots[:1])
+    while pending:
+        current = pending.pop()
+        if current not in reached:
+            reached.add(current)
+            pending.extend(children.get(current, []))
+    for node in nodes:
+        if node["id"] not in reached and node["parent"] in known:
+            failures.append(f"node {node['id']} is not reachable from the root")
+    for target in sorted(set(openers) - known):
+        failures.append(f"data-open-node points to unknown node {target}")
+    return failures
 
 
 def structural_failures(format_name: str, text: str) -> list[str]:
@@ -100,6 +195,17 @@ def structural_failures(format_name: str, text: str) -> list[str]:
             failures.append(f"exactly one cover slide, found {cover_count}")
         if any(token in text for token in ("<details", "details-toggle", "details-panel")):
             failures.append("deck content must not use details or legacy details panels")
+    elif format_name == "interactive":
+        if not parser.chapters:
+            failures.append("at least one chapter")
+        for index, chapter in enumerate(parser.chapters, start=1):
+            if not chapter["claim"]:
+                failures.append(f"chapter {index} needs a visible claim")
+        if parser.stray_details:
+            failures.append("interactive content may use details only for Go deeper (class=deeper)")
+        failures.extend(node_failures(parser.nodes, parser.openers))
+        if parser.openers and not parser.nodes:
+            failures.append("data-open-node used but no drill-down nodes exist")
     elif "<details" in text:
         failures.append("page content must not use details; keep content visible")
 
@@ -162,6 +268,194 @@ def run_browser(command: list[str], *, capture: bool = False) -> str:
         command, check=True, text=True, capture_output=capture
     )
     return result.stdout.strip() if capture else ""
+
+
+def parse_eval(raw: str):
+    value = json.loads(raw) if raw else None
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def control_failures(label: str, before: dict, after: dict, declared: list[str]) -> list[str]:
+    changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+    if not changed:
+        return [f"{label} did not change the stage"]
+    undeclared = [key for key in changed if key not in declared]
+    if undeclared:
+        return [f"{label} changed undeclared stage keys: " + ", ".join(undeclared)]
+    return []
+
+
+def verify_interactive(agent_browser: str, session: str, page_url: str, bundle: Path,
+                       screenshots: list[Path], diagnostics: list[dict], failures: list[str]) -> None:
+    def browse(*args: str) -> None:
+        run_browser(browser_command(agent_browser, session, *args))
+
+    def evaluate(script: str):
+        return parse_eval(run_browser(browser_command(agent_browser, session, "eval", script), capture=True))
+
+    def enter_chapter(index: int) -> None:
+        browse("eval", f"document.querySelectorAll('article.chapter')[{index}].scrollIntoView({{block:'start'}})")
+        browse("wait", "700")
+
+    chapter_count = int(evaluate("document.querySelectorAll('article.chapter').length"))
+    for width, height in ((1440, 900), (1263, 863)):
+        browse("set", "viewport", str(width), str(height))
+        browse("open", page_url)
+        browse("wait", "500")
+        for index in range(chapter_count):
+            enter_chapter(index)
+            path = bundle / f"chapter-{index + 1:02d}-{width}x{height}.png"
+            browse("screenshot", str(path))
+            screenshots.append(path)
+            item = evaluate(diagnostics_script("interactive"))
+            item["chapter"] = index + 1
+            item["viewport"] = f"{width}x{height}"
+            diagnostics.append(item)
+            synced = evaluate(
+                f"window.Stage.state().view === document.querySelectorAll('article.chapter')[{index}].dataset.view"
+            )
+            if synced is not True:
+                failures.append(f"chapter {index + 1} at {width}x{height} did not set the stage view")
+
+    tag_controls = (
+        "JSON.stringify([...document.querySelectorAll('[data-stage-control]')].map((el, i) => {"
+        "el.setAttribute('data-control-index', String(i));"
+        "return {i, chapter: [...document.querySelectorAll('article.chapter')].indexOf(el.closest('article.chapter')),"
+        "changes: (el.dataset.changes || '').split(',').map(s => s.trim()).filter(Boolean)};}))"
+    )
+
+    def fresh_page() -> None:
+        browse("open", page_url)
+        browse("wait", "500")
+
+    browse("set", "viewport", "1440", "900")
+    fresh_page()
+    controls = evaluate(tag_controls)
+    for control in controls:
+        label = f"control {control['i'] + 1} (chapter {control['chapter'] + 1})"
+        if control["chapter"] < 0:
+            failures.append(f"control {control['i'] + 1} is outside any chapter")
+            continue
+        if not control["changes"]:
+            failures.append(f"{label} must declare data-changes")
+        fresh_page()
+        evaluate(tag_controls)
+        enter_chapter(control["chapter"])
+        evaluate(
+            f"(() => {{ const el = document.querySelector(\"[data-control-index='{control['i']}']\");"
+            "const group = el.closest('[data-control-group]');"
+            "if (!group || el.getAttribute('aria-pressed') !== 'true') return false;"
+            "const other = [...group.querySelectorAll('[data-stage-control]')].find(b => b !== el);"
+            "if (other) other.click(); return !!other; })()"
+        )
+        browse("wait", "300")
+        before = evaluate("JSON.stringify(window.Stage.state())")
+        browse("click", f"[data-control-index='{control['i']}']")
+        browse("wait", "500")
+        after = evaluate("JSON.stringify(window.Stage.state())")
+        failures.extend(control_failures(label, before, after, control["changes"]))
+        path = bundle / f"control-{control['i'] + 1:02d}.png"
+        browse("screenshot", str(path))
+        screenshots.append(path)
+
+    fresh_page()
+    enter_chapter(0)
+    browse("click", "[data-depth='overview']")
+    browse("wait", "300")
+    overview = evaluate(
+        "JSON.stringify({claims: [...document.querySelectorAll('.chapter .claim')].every(el => el.offsetParent !== null),"
+        "full: [...document.querySelectorAll('.chapter .full')].some(el => el.offsetParent !== null)})"
+    )
+    if not overview["claims"]:
+        failures.append("overview mode hides a chapter claim")
+    if overview["full"]:
+        failures.append("overview mode still shows full-depth content")
+    path = bundle / "overview.png"
+    browse("screenshot", str(path))
+    screenshots.append(path)
+    browse("click", "[data-depth='full']")
+
+    browse("click", "#explore-btn")
+    browse("wait", "500")
+    if evaluate("document.body.classList.contains('explore')") is not True:
+        failures.append("explore button did not enter explore mode")
+    path = bundle / "explore.png"
+    browse("screenshot", str(path))
+    screenshots.append(path)
+    browse("click", "#explore-btn")
+
+    nodes = evaluate(
+        "JSON.stringify([...document.querySelectorAll('article.node')].map(n => ({id: n.dataset.node, view: n.dataset.view || '',"
+        "children: [...document.querySelectorAll('article.node')].filter(c => c.dataset.parent === n.dataset.node).length})))"
+    )
+    if nodes:
+        verify_drilldown(browse, evaluate, page_url, nodes, bundle, screenshots, diagnostics, failures)
+
+
+def verify_drilldown(browse, evaluate, page_url: str, nodes: list[dict], bundle: Path,
+                     screenshots: list[Path], diagnostics: list[dict], failures: list[str]) -> None:
+    for node in nodes:
+        browse("open", f"{page_url}#node={node['id']}")
+        browse("wait", "500")
+        result = evaluate(
+            "JSON.stringify({drill: document.body.classList.contains('drill'),"
+            f"open: !!document.querySelector(\"article.node.open[data-node='{node['id']}']\"),"
+            "state: window.Stage.state(),"
+            "children: document.querySelectorAll('#children [data-open-node]').length,"
+            "crumbs: document.querySelectorAll('#crumbs button').length})"
+        )
+        label = f"node {node['id']}"
+        if not result["drill"] or not result["open"]:
+            failures.append(f"{label} did not open from #node={node['id']}")
+            continue
+        if result["state"].get("view") != node["view"]:
+            failures.append(f"{label} did not set the stage view to {node['view']!r}")
+        if result["state"].get("node") != node["id"]:
+            failures.append(f"{label} did not set Stage.state().node")
+        if result["children"] != node["children"]:
+            failures.append(f"{label} lists {result['children']} children, expected {node['children']}")
+        if result["crumbs"] < 1:
+            failures.append(f"{label} shows no breadcrumb")
+        item = evaluate(diagnostics_script("interactive"))
+        item["node"] = node["id"]
+        item["viewport"] = "1440x900"
+        diagnostics.append(item)
+        path = bundle / f"node-{node['id']}.png"
+        browse("screenshot", str(path))
+        screenshots.append(path)
+
+    root = evaluate("(document.querySelector('article.node:not([data-parent])') || {dataset: {}}).dataset.node || ''")
+    browse("open", page_url)
+    browse("wait", "500")
+    browse("click", "#map-btn")
+    browse("wait", "400")
+    if evaluate("location.hash") != f"#node={root}":
+        failures.append("map button did not open the root node")
+    browse("open", f"{page_url}#node={root}")
+    browse("wait", "500")
+    stage_openers = evaluate(
+        "JSON.stringify([...document.querySelectorAll('#stage [data-open-node]')].map(el => el.getAttribute('data-open-node')))"
+    )
+    if not stage_openers:
+        failures.append("the stage has no clickable parts (data-open-node) in the root node view")
+    else:
+        target = stage_openers[0]
+        evaluate(
+            f"(() => {{ document.querySelector(\"#stage [data-open-node='{target}']\")"
+            ".dispatchEvent(new MouseEvent('click', {bubbles: true})); return true; })()"
+        )
+        browse("wait", "400")
+        if evaluate("location.hash") != f"#node={target}":
+            failures.append(f"clicking stage part {target} did not open its node")
+    browse("click", "#tour-btn")
+    browse("wait", "500")
+    if evaluate("document.body.classList.contains('drill')") is not False:
+        failures.append("back-to-tour button did not leave drill-down")
 
 
 def diagnostics_script(format_name: str) -> str:
@@ -324,6 +618,8 @@ def verify(format_name: str, output: Path) -> None:
                 closed = run_browser(browser_command(agent_browser, session, "eval", f"getComputedStyle(document.querySelector({json.dumps(control['target'])})).display === 'none'"), capture=True)
                 if "true" not in closed.lower():
                     failures.append(f"declared target {control['target']} did not close with Escape")
+        elif format_name == "interactive":
+            verify_interactive(agent_browser, session, page_url, bundle, screenshots, diagnostics, failures)
         else:
             for width, height in ((1440, 1100), (1263, 863)):
                 run_browser(browser_command(agent_browser, session, "set", "viewport", str(width), str(height)))
@@ -357,7 +653,12 @@ def verify(format_name: str, output: Path) -> None:
         subprocess.run(browser_command(agent_browser, session, "close"), check=False)
 
     for item in diagnostics:
-        label = f"slide {item.get('slide')}" if item.get("slide") else "page"
+        if item.get("slide"):
+            label = f"slide {item['slide']}"
+        elif item.get("chapter"):
+            label = f"chapter {item['chapter']} at {item.get('viewport')}"
+        else:
+            label = "page"
         for key in ("clipped", "tinyText", "svgOverflow", "containerOverflow",
                     "wrappedCompactLabels", "inlineLabelBody",
                     "fixedChromeIntersections", "unlabeledButtons"):

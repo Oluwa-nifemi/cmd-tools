@@ -228,11 +228,24 @@ is_in_list() {
   return 1
 }
 
-# Count commits on a branch relative to its parent
+# Use the remote trunk for display ranges when it exists. The local trunk can
+# lag after another checkout fetches or pushes changes to origin.
+display_parent() {
+  local branch="$1" parent trunk
+  parent="$(get_parent "$branch" 2>/dev/null)" || return 1
+  trunk="$(trunk_branch)"
+  if [[ "$parent" == "$trunk" ]] && git show-ref --verify --quiet "refs/remotes/origin/$trunk"; then
+    printf 'origin/%s\n' "$trunk"
+  else
+    printf '%s\n' "$parent"
+  fi
+}
+
+# Count commits on a branch relative to its display parent.
 count_commits() {
   local branch="$1"
   local parent
-  parent="$(get_parent "$branch" 2>/dev/null)" || return 0
+  parent="$(display_parent "$branch")" || return 0
   git rev-list --count "$parent".."$branch" 2>/dev/null || echo 0
 }
 
@@ -241,20 +254,27 @@ count_commits() {
 # Set up gs in a repo. Creates .git/gs/ dir and records which branch is trunk.
 cmd_init() {
   ensure_git_repo
-  local d
+  local d trunk="" explicit_trunk=0
   d="$(gs_dir)"
 
+  if [[ ${1:-} == "--trunk" ]]; then
+    [[ -n ${2:-} ]] || die "missing branch after --trunk"
+    trunk="$2"
+    explicit_trunk=1
+    shift 2
+  fi
+  [[ $# -eq 0 ]] || die "unknown argument: $1"
+
   if [[ -d "$d" ]]; then
-    warn "gs is already initialized in this repo"
-    info "trunk: $(trunk_branch)"
+    local configured_trunk
+    configured_trunk="$(trunk_branch)"
+    if [[ $explicit_trunk -eq 1 && "$trunk" != "$configured_trunk" ]]; then
+      die "gs is already initialized with trunk '$configured_trunk', not '$trunk'"
+    fi
     return 0
   fi
 
-  local trunk=""
-  # Check for explicit argument
-  if [[ ${1:-} == "--trunk" ]] && [[ -n ${2:-} ]]; then
-    trunk="$2"
-  else
+  if [[ $explicit_trunk -eq 0 ]]; then
     # Auto-detect
     for candidate in main master; do
       if branch_exists "$candidate"; then
@@ -311,7 +331,7 @@ build_ls_cache() {
       # The porcelain listing already names each worktree's branch, so no
       # extra rev-parse per worktree. Detached worktrees have no branch line.
       local br="${wt_branch#refs/heads/}"
-      if [[ -n "$br" ]] && [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+      if [[ -n "$br" ]] && [[ -n "$(git -C "$wt_path" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
         touch "$cache_dir/dirty_$(encode_branch "$br")"
       fi
       wt_path=""
@@ -474,7 +494,7 @@ print_log_tree() {
 
     # Show commits on this branch
     local parent_branch
-    parent_branch="$(get_parent "$child" 2>/dev/null)" || parent_branch="$parent"
+    parent_branch="$(display_parent "$child")" || parent_branch="$parent"
     local commits
     commits="$(git log --oneline "$parent_branch".."$child" 2>/dev/null)" || commits=""
     if [[ -n "$commits" ]]; then

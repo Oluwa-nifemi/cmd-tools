@@ -4,7 +4,7 @@ Run source lint first:
 
 ```bash
 python3 scripts/presentation_artifact.py lint \
-  --format <deck|page> \
+  --format <deck|page|interactive> \
   --output <path>
 ```
 
@@ -12,7 +12,7 @@ Then run browser verification:
 
 ```bash
 python3 scripts/presentation_artifact.py verify \
-  --format <deck|page> \
+  --format <deck|page|interactive> \
   --output <path>
 ```
 
@@ -23,6 +23,24 @@ or interaction defects.
 
 For page mode it also writes annotated section screenshots. Use these for
 selector-level feedback. Keep clean exports separate from annotated evidence.
+
+For interactive mode, lint requires at least one chapter, a visible claim in
+each chapter, and no `<details>` except `details.deeper`. Verify also:
+
+- screenshots every chapter at both viewports and checks that
+  `Stage.state().view` matches the chapter's `data-view`;
+- reloads the page, clicks each `[data-stage-control]`, and fails if the stage
+  state does not change or a key outside `data-changes` changes;
+- checks that Overview keeps claims visible and hides `.full` content;
+- checks that the explore button toggles explore mode.
+- with drill-down nodes: lint checks one root, known parents, no unreachable
+  nodes, a claim per node, and that every `data-open-node` target exists.
+  Verify opens every node by URL and checks the stage view, `state().node`,
+  the child list, and the breadcrumb. It clicks a stage part and the Map and
+  Back to the tour buttons.
+
+The automated checks do not judge whether the writing fits the reader. Run the
+self-check in [interactive.md](interactive.md) for that.
 
 Inspect the contact sheet. Then inspect every flagged slide, novel layout, SVG,
 and open modal screenshot. The automated checks do not judge whether the story,

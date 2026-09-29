@@ -2,7 +2,7 @@
 
 This file is the **research-specific layer** for deck rendering. The full rendering spec — aesthetics, code modal architecture, navigation, mandatory invariants, sub-agent dispatch protocol — lives in the generic presentation skill at `~/.claude/skills/presentation/SKILL.md`.
 
-When the research skill renders a deck, it composes a presentation brief (per `~/.claude/skills/presentation/brief-format.md`) using this overlay's slide outline + aesthetic override, then dispatches the rendering against the generic spec.
+When the research skill renders a deck, it composes a presentation brief (per `~/.claude/skills/presentation/briefs/common.md` and `briefs/deck.md`) using this overlay's slide outline + aesthetic override, then dispatches the rendering against the generic spec.
 
 **The dispatched sub-agent MUST read `~/.claude/skills/presentation/SKILL.md` in full before writing any HTML.** This is non-negotiable — past renders missed the mandatory invariants because the sub-agent skimmed the spec. Include this instruction verbatim near the top of the brief.
 

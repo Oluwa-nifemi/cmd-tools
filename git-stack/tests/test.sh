@@ -1108,6 +1108,106 @@ test_split_rejects_commit_below_recorded_base() {
   ! "$REAL_GIT" -C "$REPO" show-ref --verify --quiet refs/heads/too-low || fail "failed split left a branch"
 }
 
+test_track_ignores_unrelated_stale_stack() {
+  new_repo
+  make_linear_stack
+  "$REAL_GIT" -C "$REPO" checkout -q main
+  "$REAL_GIT" -C "$REPO" checkout -qb stale
+  printf 'stale\n' > "$REPO/stale.txt"
+  "$REAL_GIT" -C "$REPO" add stale.txt
+  "$REAL_GIT" -C "$REPO" commit -qm stale
+  "$REAL_GIT" -C "$REPO" checkout -q main
+  # This models old tracking metadata that predates durable base records.
+  printf 'main\n' > "$(common_dir)/gs/branches/stale"
+  rm -f "$(common_dir)/gs/bases/stale"
+  local stale_tip
+  stale_tip="$("$REAL_GIT" -C "$REPO" rev-parse stale)"
+  printf 'main-2\n' >> "$REPO/file.txt"
+  "$REAL_GIT" -C "$REPO" add file.txt
+  "$REAL_GIT" -C "$REPO" commit -qm main-2
+
+  run_gs "$REPO" track parent --onto main >/dev/null
+
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor main parent
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor parent child
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-parse stale)" "$stale_tip"
+  assert_no_file "$(common_dir)/gs/bases/stale"
+}
+
+test_ls_counts_trunk_child_from_origin_trunk() {
+  new_repo
+  run_gs "$REPO" init >/dev/null
+  setup_origin
+  "$REAL_GIT" -C "$REPO" checkout -qb remote-main
+  printf 'remote-1\n' >> "$REPO/file.txt"
+  "$REAL_GIT" -C "$REPO" add file.txt
+  "$REAL_GIT" -C "$REPO" commit -qm remote-1
+  printf 'remote-2\n' >> "$REPO/file.txt"
+  "$REAL_GIT" -C "$REPO" add file.txt
+  "$REAL_GIT" -C "$REPO" commit -qm remote-2
+  "$REAL_GIT" -C "$REPO" push -qu origin remote-main:main
+  "$REAL_GIT" -C "$REPO" checkout -qb feature
+  printf 'feature\n' > "$REPO/feature.txt"
+  "$REAL_GIT" -C "$REPO" add feature.txt
+  "$REAL_GIT" -C "$REPO" commit -qm feature
+  "$REAL_GIT" -C "$REPO" branch -D remote-main >/dev/null
+  # Track directly so the intentionally stale local trunk does not rebase feature.
+  printf 'main\n' > "$(common_dir)/gs/branches/feature"
+
+  assert_contains "$(run_gs "$REPO" ls)" "feature"
+  assert_contains "$(run_gs "$REPO" ls)" "(1 commit)"
+}
+
+test_ls_dirty_marker_ignores_untracked_files() {
+  new_repo
+  make_linear_stack
+  printf 'untracked\n' > "$REPO/untracked.txt"
+
+  local output
+  output="$(run_gs "$REPO" ls)"
+  [[ "$output" != *'*'* ]] || fail "ls marked an untracked-only worktree dirty"
+
+  printf 'tracked change\n' >> "$REPO/child.txt"
+  output="$(run_gs "$REPO" ls)"
+  [[ "$output" == *'*'* ]] || fail "ls did not mark tracked changes dirty"
+}
+
+test_sync_current_updates_trunk_without_stale_stacks() {
+  new_repo
+  make_linear_stack
+  setup_origin
+  install_fake_gh
+  "$REAL_GIT" -C "$REPO" branch stale main
+  printf 'main\n' > "$(common_dir)/gs/branches/stale"
+  rm -f "$(common_dir)/gs/bases/stale"
+  local stale_tip publisher
+  stale_tip="$("$REAL_GIT" -C "$REPO" rev-parse stale)"
+  publisher="$TEST_ROOT/publisher"
+  "$REAL_GIT" clone -q -b main "$REMOTE" "$publisher"
+  printf 'remote main\n' >> "$publisher/file.txt"
+  "$REAL_GIT" -C "$publisher" add file.txt
+  "$REAL_GIT" -C "$publisher" commit -qm remote-main
+  "$REAL_GIT" -C "$publisher" push -q origin main
+
+  run_gs "$REPO" sync >/dev/null
+
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-parse main)" "$("$REAL_GIT" -C "$REPO" rev-parse origin/main)"
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor main parent
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor parent child
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-parse stale)" "$stale_tip"
+  assert_no_file "$(common_dir)/gs/bases/stale"
+}
+
+test_init_matching_trunk_is_quiet() {
+  new_repo
+  run_gs "$REPO" init --trunk main >/dev/null
+  local output
+
+  output="$(run_gs "$REPO" init --trunk main 2>&1)"
+
+  assert_eq "$output" ""
+}
+
 run_test() {
   local name="$1"
   TEST_ROOT=""
@@ -1169,7 +1269,12 @@ for test_name in \
   test_land_finalizer_tolerates_missing_branch \
   test_stack_rejects_self_cycle \
   test_commit_missing_descendant_base_stops_before_commit \
-  test_split_rejects_commit_below_recorded_base
+  test_split_rejects_commit_below_recorded_base \
+  test_track_ignores_unrelated_stale_stack \
+  test_ls_counts_trunk_child_from_origin_trunk \
+  test_ls_dirty_marker_ignores_untracked_files \
+  test_sync_current_updates_trunk_without_stale_stacks \
+  test_init_matching_trunk_is_quiet
 do
   run_test "$test_name"
 done

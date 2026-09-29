@@ -25,6 +25,8 @@ Follow the opening with concrete bullets when they help a reviewer understand wh
 
 If a reviewer would get something wrong without being told (a tradeoff, a surprising decision, something that looks wrong but isn't, a dependency on other work), mention it in one sentence. Mention at most two such things. A harmless behavior change that the diff already shows does not count. If nothing like that applies, stop after the two parts above.
 
+Do not mention that a PR is stacked on another PR. GitHub already shows the base branch.
+
 Size the description to the number of ideas, not the number of files. A one-line fix gets one or two sentences. By default, write an opening of two or three sentences and at most four bullets, even for a large PR. Go past this only when the user asks for more detail.
 
 Add sections only when the PR contains distinct concerns that are easier to review separately. Use short bold labels, not Markdown headings. Do not add generic labels such as **What changed**. Separate main behavior, shared infrastructure, and local tooling only when the split improves the description. It is fine to fold them together.

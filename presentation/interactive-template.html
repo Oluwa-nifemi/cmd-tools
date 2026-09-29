@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  INTERACTIVE TEMPLATE
+  The shell below owns the reading pattern: chapter sync, depth toggle,
+  explore mode, legend, and inspector. Do not edit the shell script.
+  Fill these regions:
+    1. STAGE:START..STAGE:END   — replace the sample window.Stage.
+    2. CHAPTERS:START..CHAPTERS:END — replace the sample chapter.
+    3. EXPLORE:START..EXPLORE:END — free-play controls.
+    4. NODES:START..NODES:END — optional drill-down nodes (see below).
+  Stage contract: window.Stage = { show(view, nodeId), set(key, value), state() }.
+  state() must return a JSON-serializable object that includes view.
+  Drill-down: <article class="node" id="node-x" data-node="x" data-parent="y"
+  data-level="component" data-view="v">. Exactly one node has no data-parent.
+  Any element with data-open-node="x" opens node x (stage parts, links).
+-->
+<base target="_blank">
+<title>Interactive explainer</title>
+<style>
+  :root {
+    --paper: #f5f3ee; --paper-2: #ece8df; --ink: #1c1b18; --ink-soft: #4a463e;
+    --ink-faint: #6b665b; --rule: #d8d2c6; --accent: #3a6b3a; --accent-soft: #eaf0ea;
+    --warn: #9a6a2f; --warn-soft: #f3ebdd;
+    --font-display: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: Georgia, "Times New Roman", serif;
+    --font-mono: Menlo, "SF Mono", Consolas, monospace;
+  }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden;
+    background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55; }
+  .top { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1.2rem; border-bottom: 1px solid var(--rule); }
+  .top h1 { font-family: var(--font-display); font-size: 1.25rem; margin: 0; font-weight: 600; }
+  #rail { display: flex; gap: 0.3rem; margin: 0 auto; }
+  #rail button, .top button, .widget button {
+    font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-soft); background: var(--paper-2);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 0.3em 0.8em; cursor: pointer; }
+  #rail button.on, .top button.on, .widget button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .depth { display: flex; gap: 0.2rem; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(360px, 1fr); min-height: 0; }
+  #stage-wrap { position: relative; display: grid; grid-template-rows: 1fr auto; min-height: 0;
+    border-right: 1px solid var(--rule); padding: 1rem 1.2rem; }
+  #stage { min-height: 0; display: flex; align-items: center; justify-content: center; }
+  #stage > svg, #stage > canvas { width: 100%; height: 100%; max-height: 100%; }
+  #legend { position: absolute; top: 1rem; right: 1.2rem; display: grid; gap: 0.2rem; font-size: 0.8rem; }
+  #legend:empty { display: none; }
+  #legend .item { display: flex; align-items: center; gap: 0.4rem; }
+  #legend .swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; }
+  #legend .note { color: var(--ink-faint); }
+  #inspector { position: absolute; left: 1.2rem; top: 1rem; max-width: 18rem; background: var(--paper);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+  #inspector[hidden] { display: none; }
+  #honesty { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--warn); }
+  #story { overflow-y: auto; min-height: 0; padding: 1.5rem 1.8rem 60vh; }
+  .chapter { min-height: 70vh; padding-bottom: 2rem; }
+  .chapter .kicker { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint); }
+  .chapter.active .kicker { color: var(--accent); }
+  .chapter h2 { font-family: var(--font-display); font-size: 1.6rem; line-height: 1.2; margin: 0.3rem 0 0.8rem; }
+  .claim { font-size: 1.1rem; font-weight: 600; }
+  .analogy { border-left: 3px solid var(--accent); padding-left: 0.8rem; color: var(--ink-soft); }
+  .widget { border: 1px solid var(--rule); border-radius: 6px; padding: 0.8rem 1rem; margin: 1rem 0; background: var(--paper-2); }
+  .widget .widget-label { display: block; font-family: var(--font-mono); font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); margin-bottom: 0.4rem; }
+  .widget .controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
+  .question { margin: 0.8rem 0; }
+  .question strong { display: block; }
+  details.deeper { margin-top: 1rem; border-top: 1px solid var(--rule); padding-top: 0.6rem; }
+  details.deeper summary { font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--accent); cursor: pointer; }
+  body[data-depth="overview"] .full, body[data-depth="overview"] .deeper { display: none; }
+  #explore-panel { display: none; }
+  body.explore #story .chapter { display: none; }
+  body.explore #explore-panel { display: block; }
+  #map-btn[hidden] { display: none; }
+  #tour-btn { display: none; }
+  body.drill #tour-btn { display: inline-block; }
+  #node-panel { display: none; }
+  body.drill #story .chapter, body.drill #explore-panel { display: none; }
+  body.drill #node-panel { display: block; }
+  article.node { display: none; }
+  article.node.open { display: block; }
+  #crumbs { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.8rem; }
+  #crumbs button { font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-soft); background: var(--paper-2);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 0.2em 0.7em; cursor: pointer; }
+  #crumbs button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #children { display: grid; gap: 0.5rem; margin-top: 1.4rem; border-top: 1px solid var(--rule); padding-top: 0.8rem; }
+  #children[hidden] { display: none; }
+  #children .children-head { font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-faint); }
+  #children button { display: grid; gap: 0.15rem; text-align: left; font-family: var(--font-body); font-size: 0.92rem;
+    color: var(--ink); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem 0.8rem; cursor: pointer; }
+  #children button:hover { border-color: var(--accent); }
+  #children .level { font-family: var(--font-mono); font-size: 0.78rem; text-transform: uppercase; color: var(--ink-faint); }
+  #children .gist { color: var(--ink-soft); }
+  [data-open-node] { cursor: pointer; }
+  pre.code { font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.45; background: var(--paper-2);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto; white-space: pre; }
+  .source { font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink-faint); }
+</style>
+</head>
+<body data-depth="full">
+<header class="top">
+  <h1 id="doc-title">Interactive explainer</h1>
+  <nav id="rail" aria-label="Chapters"></nav>
+  <div class="depth">
+    <button data-depth="overview">Overview</button>
+    <button data-depth="full" class="on">Full</button>
+  </div>
+  <button id="explore-btn">Explore freely</button>
+  <button id="map-btn" hidden>Map</button>
+  <button id="tour-btn">Back to the tour</button>
+</header>
+<div class="layout">
+  <div id="stage-wrap">
+    <div id="stage"></div>
+    <p id="honesty">Say here which parts are real data and which are illustrative.</p>
+    <div id="legend"></div>
+    <div id="inspector" hidden></div>
+  </div>
+  <section id="story">
+  <!-- CHAPTERS:START -->
+    <article class="chapter" id="ch-sample" data-view="intro">
+      <div class="kicker">Chapter 1</div>
+      <h2>Example chapter — delete me</h2>
+      <p class="claim">One plain sentence that states the point.</p>
+      <div class="full">
+        <p class="analogy">An everyday analogy for the idea.</p>
+        <p>The mechanism, in short sentences, using only terms explained earlier.</p>
+        <div class="widget">
+          <span class="widget-label">Try it</span>
+          <p>Change the input and watch the output node on the stage.</p>
+          <div class="controls" data-control-group>
+            <button data-stage-control data-set="value=1" data-changes="value" aria-pressed="true">Input 1</button>
+            <button data-stage-control data-set="value=5" data-changes="value">Input 5</button>
+          </div>
+        </div>
+        <div class="question"><strong>Wait, but why double?</strong>Answer the likely question here.</div>
+      </div>
+      <details class="deeper"><summary>Go deeper</summary><p>Formulas, symbols, and bookkeeping live here.</p></details>
+    </article>
+  <!-- CHAPTERS:END -->
+    <div id="explore-panel">
+    <!-- EXPLORE:START -->
+      <h2>Explore freely</h2>
+      <p>Every example and control, open for play.</p>
+    <!-- EXPLORE:END -->
+    </div>
+    <div id="node-panel">
+      <nav id="crumbs" aria-label="Where you are"></nav>
+    <!-- NODES:START -->
+    <!-- NODES:END -->
+      <div id="children" hidden></div>
+    </div>
+  </section>
+</div>
+<script>
+/* STAGE:START — replace this sample stage. Keep the contract. */
+window.Stage = (function () {
+  var el = document.getElementById("stage");
+  var state = { view: null, node: null, value: "1" };
+  var ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 600 200");
+  svg.setAttribute("role", "img");
+  var nodes = ["input", "double", "output"].map(function (name, i) {
+    var g = document.createElementNS(ns, "g");
+    var rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", 40 + i * 190); rect.setAttribute("y", 60);
+    rect.setAttribute("width", 140); rect.setAttribute("height", 80); rect.setAttribute("rx", 8);
+    var text = document.createElementNS(ns, "text");
+    text.setAttribute("x", 110 + i * 190); text.setAttribute("y", 106);
+    text.setAttribute("text-anchor", "middle"); text.setAttribute("font-size", "18");
+    g.appendChild(rect); g.appendChild(text); svg.appendChild(g);
+    g.addEventListener("mouseenter", function () { window.Shell.inspect("<strong>" + name + "</strong>"); });
+    g.addEventListener("mouseleave", function () { window.Shell.inspect(""); });
+    return { name: name, rect: rect, text: text };
+  });
+  el.appendChild(svg);
+  function render() {
+    var v = Number(state.value);
+    var labels = { input: String(v), double: "\u00d7 2", output: String(v * 2) };
+    nodes.forEach(function (n) {
+      n.text.textContent = labels[n.name];
+      n.rect.setAttribute("fill", state.view === "intro" && n.name === "output" ? "#eaf0ea" : "#ece8df");
+      n.rect.setAttribute("stroke", "#3a6b3a");
+    });
+    window.Shell.legend([{ label: "output", color: "#3a6b3a", note: "what the chapter points at" }]);
+  }
+  return {
+    show: function (view, nodeId) { state.view = view; state.node = nodeId || null; render(); },
+    set: function (key, value) { state[key] = value; render(); },
+    state: function () { return Object.assign({}, state); }
+  };
+})();
+/* STAGE:END */
+</script>
+<script>
+(function () {
+  var story = document.getElementById("story");
+  var rail = document.getElementById("rail");
+  var chapters = Array.prototype.slice.call(document.querySelectorAll("article.chapter"));
+  var nodes = Array.prototype.slice.call(document.querySelectorAll("article.node"));
+  var exploreBtn = document.getElementById("explore-btn");
+  var root = nodes.filter(function (n) { return !n.dataset.parent; })[0];
+  if (root) document.getElementById("map-btn").hidden = false;
+  var active = -1;
+  window.Shell = window.Shell || {};
+  window.Shell.inspect = function (html) {
+    var box = document.getElementById("inspector");
+    box.innerHTML = html || ""; box.hidden = !html;
+  };
+  window.Shell.legend = function (items) {
+    var box = document.getElementById("legend");
+    box.innerHTML = "";
+    (items || []).forEach(function (item) {
+      var row = document.createElement("div"); row.className = "item";
+      var sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = item.color;
+      var label = document.createElement("span"); label.textContent = item.label;
+      row.appendChild(sw); row.appendChild(label);
+      if (item.note) { var note = document.createElement("span"); note.className = "note"; note.textContent = item.note; row.appendChild(note); }
+      box.appendChild(row);
+    });
+  };
+  function enter(i) {
+    if (i === active || document.body.classList.contains("explore") || document.body.classList.contains("drill")) return;
+    active = i;
+    chapters.forEach(function (c, j) { c.classList.toggle("active", j === i); });
+    Array.prototype.forEach.call(rail.children, function (b, j) { b.classList.toggle("on", j === i); });
+    window.Stage.show(chapters[i].dataset.view);
+  }
+  function nodeById(id) { return nodes.filter(function (n) { return n.dataset.node === id; })[0]; }
+  function nodeTitle(n) { return ((n.querySelector("h2") || {}).textContent || n.dataset.node).trim(); }
+  function openNode(node) {
+    document.body.classList.remove("explore");
+    exploreBtn.textContent = "Explore freely";
+    document.body.classList.add("drill");
+    nodes.forEach(function (n) { n.classList.toggle("open", n === node); });
+    var crumbs = document.getElementById("crumbs");
+    crumbs.innerHTML = "";
+    var chain = [];
+    for (var n = node; n && chain.length < 50; n = nodeById(n.dataset.parent)) chain.unshift(n);
+    chain.forEach(function (c, i) {
+      var b = document.createElement("button");
+      b.textContent = nodeTitle(c);
+      b.setAttribute("data-open-node", c.dataset.node);
+      if (i === chain.length - 1) b.className = "on";
+      crumbs.appendChild(b);
+    });
+    var kids = document.getElementById("children");
+    kids.innerHTML = "";
+    var childNodes = nodes.filter(function (c) { return c.dataset.parent === node.dataset.node; });
+    if (childNodes.length) {
+      var head = document.createElement("div");
+      head.className = "children-head";
+      head.textContent = "Inside this — click to go deeper";
+      kids.appendChild(head);
+    }
+    childNodes.forEach(function (c) {
+      var b = document.createElement("button");
+      b.setAttribute("data-open-node", c.dataset.node);
+      var level = document.createElement("span"); level.className = "level"; level.textContent = c.dataset.level || "";
+      var name = document.createElement("strong"); name.textContent = nodeTitle(c);
+      var claim = c.querySelector(".claim");
+      var gist = document.createElement("span"); gist.className = "gist"; gist.textContent = claim ? claim.textContent : "";
+      b.appendChild(level); b.appendChild(name); b.appendChild(gist);
+      kids.appendChild(b);
+    });
+    kids.hidden = !childNodes.length;
+    story.scrollTop = 0; active = -1;
+    window.Stage.show(node.dataset.view, node.dataset.node);
+  }
+  function route() {
+    var match = /^#node=([a-z0-9-]+)$/.exec(location.hash);
+    var node = match && nodeById(match[1]);
+    if (node) { openNode(node); return; }
+    if (document.body.classList.contains("drill")) {
+      document.body.classList.remove("drill");
+      active = -1; story.scrollTop = 0; sync();
+    }
+  }
+  window.addEventListener("hashchange", route);
+  function sync() {
+    if (!chapters.length) return;
+    var top = story.getBoundingClientRect().top, line = story.clientHeight * 0.3, pick = 0;
+    chapters.forEach(function (c, i) { if (c.getBoundingClientRect().top - top <= line) pick = i; });
+    enter(pick);
+  }
+  chapters.forEach(function (c, i) {
+    var b = document.createElement("button");
+    b.textContent = String(i + 1);
+    b.title = (c.querySelector("h2") || {}).textContent || "Chapter " + (i + 1);
+    b.addEventListener("click", function () { c.scrollIntoView({ behavior: "smooth", block: "start" }); });
+    rail.appendChild(b);
+  });
+  var queued = false;
+  story.addEventListener("scroll", function () {
+    if (queued) return; queued = true;
+    requestAnimationFrame(function () { queued = false; sync(); });
+  });
+  document.addEventListener("click", function (e) {
+    var opener = e.target.closest("[data-open-node]");
+    if (opener) {
+      e.preventDefault();
+      location.hash = "node=" + opener.getAttribute("data-open-node");
+      return;
+    }
+    if (e.target.closest("#map-btn")) { if (root) location.hash = "node=" + root.dataset.node; return; }
+    if (e.target.closest("#tour-btn")) { location.hash = ""; return; }
+    var depth = e.target.closest("[data-depth]");
+    if (depth && depth.tagName === "BUTTON") {
+      document.body.dataset.depth = depth.dataset.depth;
+      document.querySelectorAll("button[data-depth]").forEach(function (b) { b.classList.toggle("on", b === depth); });
+      return;
+    }
+    if (e.target.closest("#explore-btn")) {
+      if (document.body.classList.contains("drill")) {
+        document.body.classList.remove("drill");
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+      var on = document.body.classList.toggle("explore");
+      e.target.closest("#explore-btn").textContent = on ? "Back to the story" : "Explore freely";
+      story.scrollTop = 0; active = -1;
+      if (!on) sync();
+      return;
+    }
+    var control = e.target.closest("[data-stage-control]");
+    if (!control || !control.dataset.set) return;
+    control.dataset.set.split(";").forEach(function (pair) {
+      var parts = pair.split("=");
+      if (parts.length === 2) window.Stage.set(parts[0].trim(), parts[1].trim());
+    });
+    var group = control.closest("[data-control-group]");
+    if (group) group.querySelectorAll("[data-stage-control]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b === control));
+    });
+  });
+  sync();
+  route();
+})();
+</script>
+</body>
+</html>

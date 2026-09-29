@@ -1,52 +1,18 @@
-# Presentation brief format
+# Deck brief
 
-This is the contract between a calling skill and the `presentation` skill. The caller composes a brief in this shape; the presentation skill renders an HTML deck from it.
+Start with the fields in [common.md](common.md). Add the deck fields below.
+Audience tunes depth: execs get shorter content and few or no code modals; eng
+keeps deep-dive detail and code.
 
-## Hard requirement for the dispatched sub-agent
-
-**The agent that renders MUST read the presentation SKILL.md in full before
-writing a single line of HTML.** That file contains the mandatory invariants,
-the default aesthetic, visible-content rules, modal
-architecture, navigation rules, and the verification grep. Skipping it leads
-to broken decks (this has happened — the invariants exist because of past
-failures).
-
-## Schema
+## Deck fields
 
 ```markdown
-# Presentation brief
-
-## Format
-<deck | page — selects which template the renderer starts from (template.html vs page-template.html). If omitted, the rendering skill asks the caller/user rather than assuming.>
-
-## Audience
-<execs | eng | mixed | self — tunes depth: execs get shorter content and fewer/no code modals, eng keeps deep-dive detail and code>
-
-## Purpose
-<tech talk | decision doc | scoped plan | status — one line on what this artifact is for>
-
-## Output path
-<absolute path where the output HTML should be written (presentation.html for deck, or e.g. page.html for page)>
-
-## Title
-<title shown on the deck's cover slide, or the page's header>
-
-## Subtitle
-<one sentence, shown under title — the "investigation line" or topic statement>
-
 ## Cover metadata (optional)
 <key-value lines for additional cover-slide fields. Examples:>
 - Time invested: 5h 17m across 2 sessions
 - Date: 2026-05-10
 - Author: <name or team>
 - Repo: <link>
-
-## Aesthetic overrides (optional)
-<omit this section to use the editorial/typewriter defaults from SKILL.md>
-<each line overrides one specific value. Examples:>
-- Background: #efe9dd
-- Accent color: #2a5a3a
-- Special treatment: Slides marked **Reframe** in source get amber left-border (#c8860a)
 
 ## Slide outline
 <ordered list. Each slide is a `### Slide:` heading with these sub-fields:>
@@ -67,11 +33,6 @@ Notes: <optional>
 
 ### Slide: <next slide title>
 ...
-
-## Source files to read
-<absolute paths the rendering sub-agent should read for content. The sub-agent reads these IN ADDITION to following the slide outline. Lets the sub-agent fact-check its slide content against the source.>
-- /path/to/source-1.md
-- /path/to/source-2.md
 
 ## Code block candidates (optional)
 <slides where a "See code" modal affordance is warranted, with the code source>
@@ -310,22 +271,10 @@ Modal content:
 - Slide "Persistence": /Users/me/work/api/src/persistence/repositories.py lines 50-90
 ```
 
-## Notes for caller authors
+## Deck notes for caller authors
 
-- **Output path is yours.** The presentation skill writes wherever the brief says.
-- **Slide titles are yours.** No required slide names; structure your deck however the content demands.
-- **Preserve mechanism detail, not conversation length.** If the source discussion resolved how an important mechanism works, carry that clarification into the brief. Do not copy the full discussion.
-- **Use concrete examples for transformations.** When data or state changes form, include the input, output, or short sequence the reader needs. Keep the example beside the claim it explains.
-- **Split different flows.** If concepts have different actors or mechanics, prefer separate slides or sections over one compressed comparison.
-- **Source files are reading material, not authoritative.** The slide outline tells the sub-agent what to render; source files let it fact-check. If a slide's "Visible content" is fully written out in the brief, the sub-agent uses that verbatim. If it's a directive ("distill the Wins section into 5 bullets"), the sub-agent reads the source and produces the bullets.
-- **Never mark a slide "Source: inline" when the content came from research, sub-agent findings, or codebase exploration you didn't personally author from scratch.** "Inline" means "I am hand-writing this content, there is nothing upstream to check it against" — it is correct for a sprint retro or a brief where the caller *is* the source. It is a lossiness trap when the caller is actually compressing findings from elsewhere: the render agent never sees the raw material, can't fact-check the summary, can't pull back a dropped detail (a file:line ref, a specific test name, a rejected alternative), and the deck becomes a copy of a copy with no way to audit it later.
-  - Before composing the brief, **write the raw findings to a plain notes file** (e.g. `<output-dir>/research-notes.md`) — the sub-agent reports, the file/line references, the specifics you're about to compress out. This is a few minutes of transcription, not a research pass; you already have the material.
-  - Then in the brief, set each such slide's `Source:` to that notes file's path (plus a pointer to the relevant section), and list it under `## Source files to read`. The render agent reads it and can restore detail the brief's bullets dropped, verify a claim before putting it on a slide, and — if asked to make a slide more specific — has somewhere to go.
-  - Rule of thumb: if you could not answer "where did that number/claim come from?" by pointing at a file, the brief is lossy. Fix it before dispatching the render.
-- **Aesthetic overrides are additive.** Specify what differs from the default; the default holds for everything else.
-- **Brief lives next to the output.** Convention: write the brief at `<output-dir>/presentation-brief.md`. Lets the user re-edit and re-render later.
-- **The brief survives rendering.** Don't delete it. Useful for re-renders.
-- **Check for an existing deck before composing the brief.** If `presentation.html` already exists at the output path, the render is an *update*, not a fresh build. Read the existing deck first and note in the brief what it already contains — especially hand-added images, custom slides, or tuned content. The renderer's "Re-rendering over an existing deck" protocol (in SKILL.md) will inventory, audit for staleness, and preserve that content, but the caller flagging it makes the reconciliation reliable. The brief can be framed as the desired end-state of each slide; the renderer reconciles it against the existing deck rather than wiping and rebuilding.
+- **Slide titles are yours.** Structure the deck however the content demands.
+- **Check for an existing deck before composing the brief.** If `presentation.html` already exists at the output path, the render is an update. Read the existing deck and note what it already contains, especially hand-added images, custom slides, or tuned content. Frame the brief as the desired end state of each slide; the renderer reconciles it against the existing deck.
 
 ## Updating an existing deck (optional section)
 

@@ -1,6 +1,6 @@
 ---
 name: deep-dive
-description: Produce detailed, plain-language presentation decks that explain how a codebase (or a section of one) works. Use when the user asks to "deep dive into this repo", "explain this codebase", "onboard me into this project", "break down this PR", "walk me through this folder", or wants to understand unfamiliar code through structured visual presentations. Targets a repo root, a subfolder, a PR, or a file glob. Outputs slide decks with progressive disclosure, SVG diagrams, and worked examples — optimized for someone encountering the code for the first time.
+description: Produce detailed, plain-language presentations that explain how a codebase (or a section of one) works. Use when the user asks to "deep dive into this repo", "explain this codebase", "onboard me into this project", "break down this PR", "walk me through this folder", or wants to understand unfamiliar code through structured visual presentations. Targets a repo root, a subfolder, a PR, or a file glob. Outputs slide decks by default, or one interactive drill-down explorer (system → components → files → code) when the user asks for an interactive presentation.
 ---
 
 # Deep Dive
@@ -30,13 +30,19 @@ This skill combines orchestrated multi-agent research (reading actual source cod
 ## Start
 
 1. Identify the **target** (repo, folder, PR, or files) and confirm with the user.
-2. Ask two questions:
+2. Pick the **output mode**:
+   - **decks** (default): one slide deck per investigation area.
+   - **interactive**: one drill-down explorer for the whole target. Use it
+     only when the user asks for an interactive presentation.
+3. Ask two questions:
    - **Depth**: lean (quick overview, 3–5 slides per deck) or comprehensive (full walkthrough, 8–15+ slides per deck)? Default to comprehensive unless the user says otherwise.
    - **Focus areas**: any specific parts they care about most, or cover everything?
-3. Read [references/investigation.md](references/investigation.md) for the investigation protocol.
-4. Read [references/deck-principles.md](references/deck-principles.md) for the presentation principles.
-5. Create `local/<target-slug>-deep-dive/` for all artifacts.
-6. Proceed to investigation.
+   Skip a question the user already answered.
+4. Read [references/investigation.md](references/investigation.md) for the investigation protocol.
+5. Read [references/deck-principles.md](references/deck-principles.md) for decks, or
+   [references/interactive-principles.md](references/interactive-principles.md) for interactive.
+6. Create `local/<target-slug>-deep-dive/` for all artifacts.
+7. Proceed to investigation.
 
 ## Investigation phase
 
@@ -46,9 +52,9 @@ The investigation uses `$orchestrate` in research mode with parallel investigato
 
 ## Presentation phase
 
-Read [references/deck-principles.md](references/deck-principles.md) before composing briefs.
+For decks, read [references/deck-principles.md](references/deck-principles.md) before composing briefs. Produce slide decks using `$presentation` in deck format. One deck per investigation area, plus bonus deep-dive decks for complex algorithms or concepts the user flags.
 
-After investigation, produce slide decks using `$presentation` in deck format. One deck per investigation area, plus bonus deep-dive decks for complex algorithms or concepts the user flags.
+For interactive, read [references/interactive-principles.md](references/interactive-principles.md). Produce one explorer using `$presentation` in interactive format with drill-down nodes. Bonus topics become extra nodes or chapters in the same explorer.
 
 ## Follow-up and refinement
 
@@ -56,6 +62,7 @@ When the user comments on slides (via browser comments, annotations, or messages
 
 1. Answer their questions directly — plain language, concrete.
 2. Update the relevant deck(s) with note-boxes that bake the clarification into the slides so future readers get it without asking.
+   For interactive, add the answer as a "Wait, but…" question in the matching node or chapter.
 3. If a question reveals a concept that needs its own dedicated deck (the user says "I don't understand X"), dispatch a focused researcher at high reasoning effort to study that specific topic from the source code, then render a bonus deep-dive deck.
 
 ## Finish
