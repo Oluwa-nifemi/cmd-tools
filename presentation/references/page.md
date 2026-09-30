@@ -19,6 +19,15 @@ region between the template markers.
   it matters must appear together.
 - Pills and badges must stay on one line. Give their table column enough width;
   do not let a short status label wrap into a tall, hard-to-read capsule.
+- Keep table cells readable. A cell must not wrap into a narrow column of 3 or
+  more lines with under 16 characters per line. Long paths or identifiers:
+  - Do not use `word-break: break-all`. It splits words mid-token.
+  - Prefer a list or card layout with the path on its own full-width line.
+  - In a table, give the path column a `min-width` (about 22rem) and let the
+    table scroll horizontally inside a wrapper, or shorten the path and put
+    the full path in a `title`.
+  - Cap tables at about 4 text columns. Merge "what it is" and "action" if
+    needed.
 - In explanatory cards, render the label as its own block above the body. Do
   not concatenate labels such as “Method” or “Output” directly with prose.
 - Preserve the template's print stylesheet and both download links.

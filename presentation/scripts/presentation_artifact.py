@@ -502,6 +502,32 @@ def diagnostics_script(format_name: str) -> str:
       const unlabeledButtons = [...root.querySelectorAll('button')].filter(el =>
         !(el.textContent || '').trim() && !el.getAttribute('aria-label') && !el.getAttribute('title')
       ).map(selector);
+      const lineCount = el => {{
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const bottoms = [];
+        const tolerance = parseFloat(getComputedStyle(el).fontSize) / 2;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {{
+          if (!node.textContent.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const r of range.getClientRects()) {{
+            if (r.width && !bottoms.some(b => Math.abs(b - r.bottom) < tolerance)) bottoms.push(r.bottom);
+          }}
+        }}
+        return bottoms.length;
+      }};
+      const crampedText = visible.filter(el =>
+        el.matches('td, th, li, p, dd, dt, figcaption, blockquote, label, .card, .flow-box, [data-fit-within]')
+      ).flatMap(el => {{
+        const text = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+        if (text.length < 16) return [];
+        const lines = lineCount(el);
+        const perLine = text.length / Math.max(lines, 1);
+        return lines >= 3 && perLine < 16
+          ? [{{selector: selector(el), section: (el.closest('section[id]') || {{}}).id || null,
+              width: Math.round(el.getBoundingClientRect().width), lines,
+              charsPerLine: Math.round(perLine), text: text.slice(0, 40)}}] : [];
+      }});
       const wrappedCompactLabels = [...root.querySelectorAll('.pill, .badge, [data-no-wrap]')].flatMap(el => {{
         const range = document.createRange();
         range.selectNodeContents(el);
@@ -532,7 +558,7 @@ def diagnostics_script(format_name: str) -> str:
         rootOverflow: {root_overflow},
         clipped: [...new Set(clipped)], tinyText, svgOverflow: [...new Set(svgOverflow)],
         containerOverflow, wrappedCompactLabels, inlineLabelBody,
-        fixedChromeIntersections, unlabeledButtons
+        fixedChromeIntersections, unlabeledButtons, crampedText
       }});
     }})()"""
 
@@ -658,10 +684,10 @@ def verify(format_name: str, output: Path) -> None:
         elif item.get("chapter"):
             label = f"chapter {item['chapter']} at {item.get('viewport')}"
         else:
-            label = "page"
+            label = f"page at {item.get('viewport')}"
         for key in ("clipped", "tinyText", "svgOverflow", "containerOverflow",
                     "wrappedCompactLabels", "inlineLabelBody",
-                    "fixedChromeIntersections", "unlabeledButtons"):
+                    "fixedChromeIntersections", "unlabeledButtons", "crampedText"):
             if item.get(key):
                 failures.append(f"{label}: {key}: {item[key]}")
         if item.get("rootOverflow"):

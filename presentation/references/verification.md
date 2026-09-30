@@ -21,6 +21,10 @@ individual screenshots, a contact sheet, diagnostics JSON, and interaction
 evidence to `<artifact-stem>.verification/`. It fails on measurable rendering
 or interaction defects.
 
+A passing `verify` does not mean the page is readable. When you inspect the
+screenshots, read the actual text in every table and card. If you cannot read a
+cell in one pass, the layout is wrong even when verify passed.
+
 For page mode it also writes annotated section screenshots. Use these for
 selector-level feedback. Keep clean exports separate from annotated evidence.
 
@@ -57,6 +61,9 @@ Before reporting completion, confirm:
 - Links, labels, and terminology are readable.
 - Text fits inside every visual container. Lines do not end against a box edge.
 - Pills, badges, and short status labels do not wrap.
+- No text block is squeezed into a narrow column. Verify fails on
+  `crampedText`: a cell, list item, paragraph, or card with 3+ lines under 16
+  characters per line. Fix the layout, do not shorten words to pass.
 - Card labels are visually separate from body copy.
 - Fixed or sticky chrome does not intersect document content.
 - Every diagram's geometry matches the relationship described in the prose.

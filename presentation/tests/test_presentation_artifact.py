@@ -1,4 +1,6 @@
 import importlib.util
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -299,6 +301,21 @@ class ExportTests(unittest.TestCase):
             ],
         )
         self.assertEqual(run_browser.call_count, 3)
+
+
+class DiagnosticsScriptTests(unittest.TestCase):
+    def test_diagnostics_script_is_valid_javascript_with_cramped_text_check(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is required to parse the browser diagnostics script")
+        for format_name in ("deck", "page", "interactive"):
+            script = MODULE.diagnostics_script(format_name)
+            self.assertIn("crampedText", script)
+            result = subprocess.run(
+                [node, "-e", "new Function(require('fs').readFileSync(0, 'utf8'))"],
+                input=script, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
