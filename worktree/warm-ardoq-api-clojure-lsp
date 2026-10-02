@@ -6,7 +6,7 @@
 # analysis unexpectedly.
 
 worktree_path=$1
-expected_git_dir="/Users/Oluwanifemi/Documents/work/ardoq-api/.git"
+expected_git_dir="/Users/nifemi/Documents/work/ardoq-api/.git"
 
 actual_git_dir=$(
   git -C "$worktree_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
