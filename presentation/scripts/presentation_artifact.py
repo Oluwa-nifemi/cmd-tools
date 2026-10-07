@@ -6,13 +6,17 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
+from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,6 +75,7 @@ class ArtifactHTMLParser(HTMLParser):
         self.tag_counts: dict[str, int] = {}
         self.visible_text: list[str] = []
         self.ids: list[str] = []
+        self.verify_controls = 0
         self._hidden_depth = 0
         self.chapters: list[dict] = []
         self.stray_details = 0
@@ -84,6 +89,8 @@ class ArtifactHTMLParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tag_counts[tag] = self.tag_counts.get(tag, 0) + 1
         attrs_dict = dict(attrs)
+        if "data-verify-target" in attrs_dict:
+            self.verify_controls += 1
         if attrs_dict.get("id"):
             self.ids.append(attrs_dict["id"] or "")
         if tag in {"script", "style"}:
@@ -260,12 +267,19 @@ def lint(format_name: str, output: Path) -> None:
 
 
 def browser_command(agent_browser: str, session: str, *args: str) -> list[str]:
-    return [agent_browser, "--session", session, *args]
+    # Launch flags must stay identical: changing file access can relaunch Chrome.
+    verifying = session.startswith("presentation-verify-")
+    name = session.removeprefix("presentation-verify-") if verifying else session
+    # Disabling QUIC reduced CDN load time in local probes; resources stay unchanged.
+    flags = ["--namespace", name, "--pin-tab", "--no-webmcp", "--headed", "false",
+             "--args", "--disable-quic"] if verifying else []
+    return [agent_browser, "--session", name, *flags, "--allow-file-access", *args]
 
 
 def run_browser(command: list[str], *, capture: bool = False) -> str:
     result = subprocess.run(
-        command, check=True, text=True, capture_output=capture
+        command, check=True, text=True, capture_output=True, timeout=60,
+        env={**os.environ, "AGENT_BROWSER_DEFAULT_TIMEOUT": "5000"},
     )
     return result.stdout.strip() if capture else ""
 
@@ -476,11 +490,21 @@ def diagnostics_script(format_name: str) -> str:
         const r = el.getBoundingClientRect();
         return r.left < rootRect.left - 1 || r.right > rootRect.right + 1 || {vertical_bounds};
       }}).map(selector);
-      const tinyText = visible.filter(el => {{
+      const small = visible.filter(el => {{
         const text = (el.textContent || '').trim();
         if (!text || el.children.length) return false;
         return parseFloat(getComputedStyle(el).fontSize) < 12;
-      }}).map(el => ({{selector: selector(el), px: getComputedStyle(el).fontSize}}));
+      }});
+      const tinyGroups = new Map();
+      for (const el of small) {{
+        const owner = el.closest('pre code') || el;
+        const key = selector(owner) + ':' + getComputedStyle(el).fontSize;
+        const group = tinyGroups.get(key) || {{selector: selector(owner),
+          px: getComputedStyle(el).fontSize, count: 0, text: owner.textContent.trim().slice(0,80)}};
+        group.count++;
+        tinyGroups.set(key, group);
+      }}
+      const tinyText = [...tinyGroups.values()];
       const svgOverflow = [...root.querySelectorAll('svg')].flatMap(svg => {{
         const box = svg.getBoundingClientRect();
         return [...svg.querySelectorAll('text, foreignObject')].filter(el => {{
@@ -557,67 +581,227 @@ def write_contact_sheet(bundle: Path, screenshots: list[Path], report: dict) -> 
     return contact
 
 
-def verify(format_name: str, output: Path) -> None:
+def browser_batch(agent_browser: str, session: str, commands: list[list[str]]) -> list[dict]:
+    # JSON stdin preserves JavaScript quotes; batch's shell-style arguments do not.
+    result = subprocess.run(
+        browser_command(agent_browser, session, "--json", "batch"),
+        input=json.dumps(commands), text=True, capture_output=True, timeout=120,
+        env={**os.environ, "AGENT_BROWSER_DEFAULT_TIMEOUT": "5000"},
+    )
+    try:
+        items = json.loads(result.stdout)
+        if (not isinstance(items, list) or len(items) != len(commands)
+                or any(not isinstance(item, dict) or not isinstance(item.get("success"), bool) for item in items)):
+            raise ValueError("incomplete batch response")
+        return items
+    except (ValueError, TypeError) as error:
+        raise ValueError(f"Browser batch failed: {result.stderr.strip()[:500] or str(error)}") from error
+
+
+def batch_value(item: dict):
+    if not item.get("success"):
+        raise ValueError(item.get("error") or "browser command failed")
+    value = item.get("result", {}).get("result")
+    return parse_eval(json.dumps(value))
+
+
+def prepare_script() -> str:
+    # Disable motion only in this verification session, not in the artifact.
+    return """(async () => {
+      if (!document.getElementById('presentation-verify-motion')) {
+        const style = document.createElement('style');
+        style.id = 'presentation-verify-motion';
+        style.textContent = '*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}';
+        document.head.append(style);
+      }
+      await document.fonts.ready;
+      await Promise.all([...document.images].map(img => img.decode().catch(() => {})));
+      return true;
+    })()"""
+
+
+def slide_script(index: int) -> str:
+    return f"""(async () => {{
+      location.hash = '#page-{index}';
+      const slides = [...document.querySelectorAll('.slide')];
+      const deadline = performance.now() + 2000;
+      while (!slides[{index - 1}]?.classList.contains('active') && performance.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 20));
+      if (!slides[{index - 1}]?.classList.contains('active'))
+        throw new Error('slide {index} did not become active');
+      await new Promise(requestAnimationFrame);
+      return true;
+    }})()"""
+
+
+def verify_deck(agent_browser: str, session: str, page_url: str, bundle: Path,
+                screenshots: list[Path], diagnostics: list[dict], failures: list[str],
+                selected: list[int] | None, skip_interactions: bool, *,
+                _viewports: tuple | None = None, _interactions_only: bool = False,
+                _control_partition: tuple[int, int] = (0, 1), _control_workers: int = 4) -> None:
+    if _viewports is None:
+        # Separate sessions prevent viewport changes and modals racing screenshots.
+        jobs = [((viewport,), False, (0, 1)) for viewport in ((1440, 900), (1263, 863))]
+        if not skip_interactions:
+            workers = _control_workers
+            jobs.extend(((), True, (index, workers)) for index in range(workers))
+
+        def worker(viewports: tuple, interactions_only: bool, partition: tuple):
+            worker_session = f"{session}-{uuid4().hex[:8]}"
+            images, items, errors = [], [], []
+            try:
+                run_browser(browser_command(agent_browser, worker_session, "open", page_url))
+                run_browser(browser_command(agent_browser, worker_session, "eval", prepare_script()))
+                verify_deck(agent_browser, worker_session, page_url, bundle, images, items, errors,
+                            selected, not interactions_only, _viewports=viewports,
+                            _interactions_only=interactions_only, _control_partition=partition)
+                page_errors = run_browser(browser_command(agent_browser, worker_session, "errors"), capture=True)
+                if page_errors and "No page errors" not in page_errors:
+                    errors.append("browser page errors: " + page_errors[:500])
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                errors.append(f"browser worker incomplete: {getattr(error, 'stderr', None) or str(error)}")
+            finally:
+                try:
+                    run_browser(browser_command(agent_browser, worker_session, "close"))
+                except (OSError, subprocess.SubprocessError) as error:
+                    errors.append(f"browser cleanup failed: {error}")
+            return images, items, errors
+
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = [pool.submit(worker, *job) for job in jobs]
+            for future in futures:
+                images, items, errors = future.result()
+                screenshots.extend(images)
+                diagnostics.extend(items)
+                failures.extend(errors)
+        return
+    metadata = parse_eval(run_browser(browser_command(agent_browser, session, "eval",
+        "JSON.stringify({count: document.querySelectorAll('.slide').length, controls: "
+        # DOM-position selectors survive reloads without temporary attributes.
+        "[...document.querySelectorAll('[data-verify-target]')].map((el,i)=>{"
+        "let node=el, parts=[]; while(node && node!==document.body){"
+        "parts.unshift(node.tagName.toLowerCase()+':nth-child('+"
+        "([...node.parentElement.children].indexOf(node)+1)+')'); node=node.parentElement;}"
+        "return {i,selector:'body > '+parts.join(' > '), target:el.dataset.verifyTarget,"
+        "slide:[...document.querySelectorAll('.slide')].indexOf(el.closest('.slide'))+1}})})"
+    ), capture=True))
+    count = metadata["count"]
+    slides = selected if selected is not None else list(range(1, count + 1))
+    if not slides or any(index < 1 or index > count for index in slides):
+        raise ValueError(f"--slides must contain slide numbers from 1 to {count}")
+
+    def collect(commands: list[list[str]], label: str) -> list[dict]:
+        try:
+            return browser_batch(agent_browser, session, commands)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            failures.append(f"{label}: {error}")
+            return []
+
+    for width, height in _viewports:
+        viewport = f"{width}x{height}"
+        prefix = [["set", "viewport", str(width), str(height)], ["eval", prepare_script()]]
+        groups = []
+        for index in slides:
+            path = bundle / f"slide-{index:02d}-{viewport}.png"
+            groups.append((index, path, [["eval", slide_script(index)],
+                          ["screenshot", str(path)], ["eval", diagnostics_script("deck")]]))
+        results = collect(prefix + [cmd for _, _, group in groups for cmd in group], viewport)
+        for offset, (index, path, group) in enumerate(groups):
+            label = f"slide {index} at {viewport}"
+            items = results[2 + offset * 3: 5 + offset * 3] if results else []
+            if not items or not all(item.get("success") for item in results[:2] + items):
+                # Retry the whole state after a fresh load; never retry a bare click.
+                retry = collect([["open", page_url]] + prefix + group, label)
+                if len(retry) != 6 or not all(item.get("success") for item in retry):
+                    errors = [item.get("error") for item in (retry or items) if not item.get("success")]
+                    failures.append(f"{label}: browser step failed: {errors}")
+                    continue
+                items = retry[-3:]
+            screenshots.append(path)
+            item = batch_value(items[2])
+            item.update(slide=index, viewport=viewport)
+            diagnostics.append(item)
+
+    if skip_interactions:
+        return
+    navigation = collect([
+        ["set", "viewport", "1440", "900"], ["eval", slide_script(1)],
+        ["click", "#next-btn"], ["eval", "location.hash"],
+        ["press", "ArrowLeft"], ["eval", "location.hash"],
+    ], "navigation")
+    if navigation:
+        for item in navigation:
+            if not item.get("success"):
+                failures.append(f"navigation: {item.get('error')}")
+        if navigation[3].get("success") and count > 1 and batch_value(navigation[3]) != "#page-2":
+            failures.append("next navigation did not reach slide 2")
+        if navigation[5].get("success") and batch_value(navigation[5]) != "#page-1":
+            failures.append("keyboard previous navigation did not reach slide 1")
+
+    for control in metadata["controls"]:
+        if control["i"] % _control_partition[1] != _control_partition[0]:
+            continue
+        if selected is not None and control["slide"] not in slides:
+            continue
+        label = f"control {control['i'] + 1} (slide {control['slide']})"
+        if control["slide"] < 1:
+            failures.append(f"{label}: outside any slide")
+            continue
+        selector = control["selector"]
+        target = json.dumps(control["target"])
+        visible = f"(() => {{const el=document.querySelector({target}); if(!el) throw new Error('missing target'); const r=el.getBoundingClientRect(); return getComputedStyle(el).visibility !== 'hidden' && r.width>0 && r.height>0;}})()"
+        path = bundle / f"interaction-{control['i'] + 1:02d}.png"
+        # Reload each control to prevent hidden state from leaking between checks.
+        commands = [["open", page_url], ["eval", prepare_script()],
+                    ["eval", slide_script(control["slide"])], ["eval", visible],
+                    ["click", selector], ["wait", "--fn", visible], ["eval", visible],
+                    ["screenshot", str(path)], ["press", "Escape"],
+                    ["wait", "--fn", f"!({visible})"], ["eval", visible]]
+        results = collect(commands, label)
+        if results and not all(item.get("success") for item in results):
+            results = collect(commands, label + " retry")
+        if not results:
+            continue
+        for command, item in zip(commands, results):
+            if not item.get("success"):
+                failures.append(f"{label}: {command[0]} failed: {item.get('error')}")
+        if results[7].get("success"):
+            screenshots.append(path)
+        if all(results[i].get("success") for i in (3, 6, 10)):
+            if batch_value(results[3]) is not False or batch_value(results[6]) is not True:
+                failures.append(f"{label}: did not open {control['target']}")
+            if batch_value(results[10]) is not False:
+                failures.append(f"{label}: {control['target']} did not close with Escape")
+
+
+def verify(format_name: str, output: Path, *, bundle_dir: Path | None = None,
+           slides: list[int] | None = None, skip_interactions: bool = False) -> None:
     lint(format_name, output)
     agent_browser = shutil.which("agent-browser")
     if agent_browser is None:
         raise ValueError("agent-browser is required for browser verification")
 
-    bundle = output.with_name(f"{output.stem}.verification")
+    if format_name != "deck" and (slides is not None or skip_interactions):
+        raise ValueError("--slides and --skip-interactions currently support only decks")
+    started = time.perf_counter()
+    bundle = (bundle_dir or output.with_name(f"{output.stem}.verification")).resolve()
     bundle.mkdir(parents=True, exist_ok=True)
-    page_url = output.resolve().as_uri() + "?verify=1"
-    session = f"presentation-verify-{output.stem}-{datetime.now().strftime('%H%M%S')}"
+    page_url = output.resolve().as_uri() + f"?verify={uuid4().hex}"
+    session = f"presentation-verify-{uuid4().hex[:12]}"
     screenshots: list[Path] = []
     diagnostics: list[dict] = []
     failures: list[str] = []
 
     try:
-        run_browser(browser_command(agent_browser, session, "--allow-file-access", "open", page_url))
+        if format_name != "deck":
+            run_browser(browser_command(agent_browser, session, "open", page_url))
+            run_browser(browser_command(agent_browser, session, "eval", prepare_script()))
         if format_name == "deck":
-            raw_count = run_browser(browser_command(agent_browser, session, "eval", "document.querySelectorAll('.slide').length"), capture=True)
-            slide_count = int(json.loads(raw_count) if raw_count.startswith(('"', '[')) else raw_count)
-            for width, height in ((1440, 900), (1263, 863)):
-                run_browser(browser_command(agent_browser, session, "set", "viewport", str(width), str(height)))
-                for index in range(1, slide_count + 1):
-                    run_browser(browser_command(agent_browser, session, "open", f"{page_url}#page-{index}"))
-                    path = bundle / f"slide-{index:02d}-{width}x{height}.png"
-                    run_browser(browser_command(agent_browser, session, "screenshot", str(path)))
-                    screenshots.append(path)
-                    raw = run_browser(browser_command(agent_browser, session, "eval", diagnostics_script(format_name)), capture=True)
-                    item = json.loads(json.loads(raw) if raw.startswith('\"') else raw)
-                    item["slide"] = index
-                    item["viewport"] = f"{width}x{height}"
-                    diagnostics.append(item)
-            run_browser(browser_command(agent_browser, session, "set", "viewport", "1440", "900"))
-
-            run_browser(browser_command(agent_browser, session, "open", f"{page_url}#page-1"))
-            run_browser(browser_command(agent_browser, session, "click", "#next-btn"))
-            next_hash = run_browser(browser_command(agent_browser, session, "eval", "location.hash"), capture=True)
-            if "page-2" not in next_hash and slide_count > 1:
-                failures.append("next navigation did not reach slide 2")
-            run_browser(browser_command(agent_browser, session, "press", "ArrowLeft"))
-            prev_hash = run_browser(browser_command(agent_browser, session, "eval", "location.hash"), capture=True)
-            if "page-1" not in prev_hash:
-                failures.append("keyboard previous navigation did not reach slide 1")
-
-            declared = run_browser(browser_command(agent_browser, session, "eval", "JSON.stringify([...document.querySelectorAll('[data-verify-target]')].map((el,i)=>{el.setAttribute('data-verify-index',String(i));return {i,target:el.dataset.verifyTarget,slide:[...document.querySelectorAll('.slide')].indexOf(el.closest('.slide'))+1}}))"), capture=True)
-            controls = json.loads(json.loads(declared) if declared.startswith('\"') else declared)
-            for control in controls:
-                selector = f"[data-verify-index='{control['i']}']"
-                run_browser(browser_command(agent_browser, session, "open", f"{page_url}#page-{control['slide']}"))
-                before = run_browser(browser_command(agent_browser, session, "eval", f"!!document.querySelector({json.dumps(control['target'])}) && getComputedStyle(document.querySelector({json.dumps(control['target'])})).display !== 'none'"), capture=True)
-                run_browser(browser_command(agent_browser, session, "click", selector))
-                after = run_browser(browser_command(agent_browser, session, "eval", f"!!document.querySelector({json.dumps(control['target'])}) && getComputedStyle(document.querySelector({json.dumps(control['target'])})).display !== 'none'"), capture=True)
-                if before == after:
-                    failures.append(f"declared control {selector} did not change {control['target']} visibility")
-                    continue
-                state_path = bundle / f"interaction-{control['i'] + 1:02d}.png"
-                run_browser(browser_command(agent_browser, session, "screenshot", str(state_path)))
-                screenshots.append(state_path)
-                run_browser(browser_command(agent_browser, session, "press", "Escape"))
-                closed = run_browser(browser_command(agent_browser, session, "eval", f"getComputedStyle(document.querySelector({json.dumps(control['target'])})).display === 'none'"), capture=True)
-                if "true" not in closed.lower():
-                    failures.append(f"declared target {control['target']} did not close with Escape")
+            parser = ArtifactHTMLParser()
+            parser.feed(output.read_text(encoding="utf-8"))
+            verify_deck(agent_browser, session, page_url, bundle, screenshots, diagnostics,
+                        failures, slides, skip_interactions,
+                        _control_workers=max(1, min(4, parser.verify_controls)))
         elif format_name == "interactive":
             verify_interactive(agent_browser, session, page_url, bundle, screenshots, diagnostics, failures)
         else:
@@ -646,19 +830,27 @@ def verify(format_name: str, output: Path) -> None:
                 item["viewport"] = f"{width}x{height}"
                 diagnostics.append(item)
 
-        errors = run_browser(browser_command(agent_browser, session, "errors"), capture=True)
-        if errors and "No page errors" not in errors:
-            failures.append("browser page errors: " + errors[:500])
+        if format_name != "deck":
+            errors = run_browser(browser_command(agent_browser, session, "errors"), capture=True)
+            if errors and "No page errors" not in errors:
+                failures.append("browser page errors: " + errors[:500])
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        detail = getattr(error, "stderr", None) or str(error)
+        failures.append("browser verification incomplete: " + str(detail)[:500])
     finally:
-        subprocess.run(browser_command(agent_browser, session, "close"), check=False)
+        try:
+            if format_name != "deck":
+                run_browser(browser_command(agent_browser, session, "close"))
+        except (OSError, subprocess.SubprocessError) as error:
+            failures.append(f"browser cleanup failed: {error}")
 
     for item in diagnostics:
         if item.get("slide"):
-            label = f"slide {item['slide']}"
+            label = f"slide {item['slide']} at {item.get('viewport')}"
         elif item.get("chapter"):
             label = f"chapter {item['chapter']} at {item.get('viewport')}"
         else:
-            label = "page"
+            label = f"page at {item.get('viewport')}"
         for key in ("clipped", "tinyText", "svgOverflow", "containerOverflow",
                     "wrappedCompactLabels", "inlineLabelBody",
                     "fixedChromeIntersections", "unlabeledButtons"):
@@ -667,12 +859,16 @@ def verify(format_name: str, output: Path) -> None:
         if item.get("rootOverflow"):
             failures.append(f"{label}: unexpected root overflow")
 
-    report = {"artifact": str(output), "format": format_name, "diagnostics": diagnostics, "failures": failures}
+    report = {"artifact": str(output), "format": format_name, "diagnostics": diagnostics,
+              "failures": failures, "elapsed_seconds": round(time.perf_counter() - started, 3),
+              "scope": {"slides": slides, "skip_interactions": skip_interactions},
+              "screenshots": [path.name for path in screenshots]}
     (bundle / "diagnostics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     contact = write_contact_sheet(bundle, screenshots, report)
     if failures:
         raise ValueError("Browser verification failed:\n- " + "\n- ".join(failures) + f"\nEvidence: {contact}")
-    print(f"Browser-verified {format_name} artifact: {output}")
+    scope = " (partial check)" if slides is not None or skip_interactions else ""
+    print(f"Browser-verified {format_name} artifact{scope}: {output}")
     print(f"Verification bundle: {bundle}")
 
 
@@ -775,6 +971,10 @@ def parse_args() -> argparse.Namespace:
         subparser = commands.add_parser(command)
         subparser.add_argument("--format", choices=sorted(TEMPLATES), required=True)
         subparser.add_argument("--output", type=Path, required=True)
+        if command == "verify":
+            subparser.add_argument("--bundle-dir", type=Path)
+            subparser.add_argument("--slides", help="Comma-separated deck slide numbers; partial check")
+            subparser.add_argument("--skip-interactions", action="store_true", help="Deck geometry only; partial check")
     return parser.parse_args()
 
 
@@ -786,12 +986,14 @@ def main() -> int:
         elif args.command == "lint":
             lint(args.format, args.output)
         elif args.command == "verify":
-            verify(args.format, args.output)
+            slides = list(dict.fromkeys(int(value) for value in args.slides.split(','))) if args.slides is not None else None
+            verify(args.format, args.output, bundle_dir=args.bundle_dir,
+                   slides=slides, skip_interactions=args.skip_interactions)
         elif args.format != "page":
             raise ValueError("Export currently supports only page format")
         else:
             export_page(args.output)
-    except (ValueError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
         print(error, file=sys.stderr)
         return 1
     return 0

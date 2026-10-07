@@ -21,6 +21,22 @@ individual screenshots, a contact sheet, diagnostics JSON, and interaction
 evidence to `<artifact-stem>.verification/`. It fails on measurable rendering
 or interaction defects.
 
+Deck checks run the two viewports and interactions in isolated parallel browser
+sessions. They batch commands and disable animation for capture. They keep
+real clicks and check each declared target opens and closes with Escape.
+Failed browser states retry once from a fresh page. Browser
+failures still produce diagnostics and a contact sheet with completed evidence.
+Verification browsers disable HTTP/3, which reduced CDN load time in local probes.
+They still load the artifact's normal external resources.
+
+For a small deck revision, use `--slides 6,8` to check only those slides and
+their controls. Use `--skip-interactions` for geometry-only checks. Both are
+partial checks, not full verification. Run full verification before handoff.
+
+Use `--bundle-dir <writable-path>` to store evidence away from a protected or
+symlinked artifact directory. This does not require writing to the artifact.
+If initialization or artifact edits need write permission, request escalation.
+
 For page mode it also writes annotated section screenshots. Use these for
 selector-level feedback. Keep clean exports separate from annotated evidence.
 

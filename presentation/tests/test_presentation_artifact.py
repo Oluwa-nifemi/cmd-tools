@@ -1,5 +1,8 @@
 import importlib.util
+import json
+import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, call, patch
@@ -10,6 +13,7 @@ SPEC = importlib.util.spec_from_file_location("presentation_artifact", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
+VERIFY_DECK = MODULE.verify_deck
 
 
 class VerifyTests(unittest.TestCase):
@@ -213,6 +217,401 @@ class StageControlTests(unittest.TestCase):
         )
 
 
+class BrowserCommandTests(unittest.TestCase):
+    def test_verification_commands_keep_isolated_namespace_and_pinned_tab(self) -> None:
+        actions = (("open", "file:///deck.html"), ("eval", "true"),
+                   ("--json", "batch"), ("errors",), ("close",))
+        for name in ("abc123", "abc123-worker1", "abc123-worker2"):
+            for action in actions:
+                with self.subTest(name=name, action=action):
+                    self.assertEqual(
+                        MODULE.browser_command("/browser", "presentation-verify-" + name, *action),
+                        ["/browser", "--session", name, "--namespace", name,
+                         "--pin-tab", "--no-webmcp", "--headed", "false",
+                         "--args", "--disable-quic",
+                         "--allow-file-access", *action],
+                    )
+
+    def test_non_verification_sessions_keep_their_names_and_flags(self) -> None:
+        for session in ("test", "presentation-export-review", "other-presentation-verify-name"):
+            with self.subTest(session=session):
+                self.assertEqual(MODULE.browser_command("/browser", session, "close"),
+                                 ["/browser", "--session", session, "--allow-file-access", "close"])
+
+
+class BrowserBatchTests(unittest.TestCase):
+    @patch.object(MODULE.subprocess, "run")
+    def test_json_stdin_preserves_quotes_and_middle_failure(self, run: Mock) -> None:
+        commands = [
+            ["eval", "document.querySelector('[data-name=\"a b\"]').textContent"],
+            ["click", "#missing"],
+            ["eval", "JSON.stringify({text: \"it's quoted\", path: 'a\\b'})"],
+        ]
+        items = [
+            {"success": True, "result": {"result": "a b"}},
+            {"success": False, "error": "missing selector"},
+            {"success": True, "result": {"result": "later state"}},
+        ]
+        run.return_value = subprocess.CompletedProcess([], 1, json.dumps(items), "")
+
+        self.assertEqual(MODULE.browser_batch("/browser", "test", commands), items)
+        args, kwargs = run.call_args
+        self.assertEqual(args[0], ["/browser", "--session", "test",
+                                   "--allow-file-access", "--json", "batch"])
+        self.assertEqual(json.loads(kwargs["input"]), commands)
+        self.assertTrue(kwargs["text"])
+        self.assertTrue(kwargs["capture_output"])
+        self.assertEqual(MODULE.batch_value(items[2]), "later state")
+        with self.assertRaisesRegex(ValueError, "missing selector"):
+            MODULE.batch_value(items[1])
+
+    @patch.object(MODULE.subprocess, "run")
+    def test_rejects_malformed_missing_or_wrong_length_batch(self, run: Mock) -> None:
+        commands = [["eval", "true"], ["eval", "false"]]
+        for stdout in ("", "not json", "null", "{}", "[]",
+                       '[{"success": true}]', '[{}, {}, {}]'):
+            with self.subTest(stdout=stdout):
+                run.return_value = subprocess.CompletedProcess([], 0, stdout, "")
+                with self.assertRaisesRegex(ValueError, "Browser batch failed:"):
+                    MODULE.browser_batch("/browser", "test", commands)
+
+    @patch.object(MODULE.subprocess, "run")
+    def test_invalid_response_reports_browser_stderr(self, run: Mock) -> None:
+        run.return_value = subprocess.CompletedProcess([], 1, "", " browser unavailable ")
+        with self.assertRaisesRegex(ValueError, "Browser batch failed: browser unavailable"):
+            MODULE.browser_batch("/browser", "test", [["open", "file:///deck.html"]])
+
+
+class BrowserEvidenceTests(unittest.TestCase):
+    @patch.object(MODULE, "lint")
+    @patch.object(MODULE.shutil, "which", return_value="/browser")
+    def test_initial_failure_still_writes_evidence_and_closes(self, _which: Mock, _lint: Mock) -> None:
+        errors = (OSError("launch failed"),
+                  subprocess.CalledProcessError(1, ["open"], stderr="open failed"),
+                  subprocess.TimeoutExpired(["open"], 60))
+        for error in errors:
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "interactive.html"
+                bundle = Path(directory) / "evidence"
+                with patch.object(MODULE, "run_browser", side_effect=[error, ""]) as browse, \
+                     patch.object(MODULE, "verify_interactive") as interactive:
+                    with self.assertRaisesRegex(ValueError, "browser verification incomplete"):
+                        MODULE.verify("interactive", output, bundle_dir=bundle)
+                interactive.assert_not_called()
+                self.assertEqual(browse.call_args_list[0].args[0][-2], "open")
+                self.assertEqual(browse.call_args_list[-1].args[0][-1], "close")
+                report = json.loads((bundle / "diagnostics.json").read_text())
+                self.assertEqual(report["screenshots"], [])
+                self.assertEqual(report["diagnostics"], [])
+                self.assertIn("browser verification incomplete", report["failures"][0])
+                self.assertIn("browser verification incomplete", (bundle / "contact-sheet.html").read_text())
+
+    @patch.object(MODULE, "lint")
+    @patch.object(MODULE.shutil, "which", return_value="/browser")
+    @patch.object(MODULE, "verify_interactive")
+    def test_cleanup_failure_preserves_evidence(self, _interactive: Mock, _which: Mock, _lint: Mock) -> None:
+        for initial_error in (None, OSError("launch failed")):
+            with self.subTest(initial_error=initial_error), tempfile.TemporaryDirectory() as directory:
+                bundle = Path(directory) / "evidence"
+                responses = (["", "", "No page errors"] if initial_error is None else [initial_error])
+                responses.append(subprocess.CalledProcessError(1, ["close"]))
+                with patch.object(MODULE, "run_browser", side_effect=responses):
+                    with self.assertRaisesRegex(ValueError, "browser cleanup failed"):
+                        MODULE.verify("interactive", Path(directory) / "interactive.html", bundle_dir=bundle)
+                report = json.loads((bundle / "diagnostics.json").read_text())
+                self.assertTrue(any("browser cleanup failed" in failure for failure in report["failures"]))
+                self.assertEqual(len(report["failures"]), 1 if initial_error is None else 2)
+                self.assertIn("browser cleanup failed", (bundle / "contact-sheet.html").read_text())
+
+
+    @patch.object(MODULE, "lint")
+    @patch.object(MODULE.shutil, "which", return_value="/browser")
+    def test_deck_failure_preserves_completed_evidence_without_parent_browser(
+        self, _which: Mock, _lint: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "evidence"
+            diagnostic = {"slide": 1, "viewport": "1440x900"}
+            output = Path(directory) / "deck.html"
+            output.write_text('<button data-verify-target="#modal">Open</button>')
+
+            def deck(_browser, _session, _url, bundle, screenshots, diagnostics,
+                     _failures, _selected, _skip_interactions, *, _control_workers):
+                self.assertEqual(_control_workers, 1)
+                screenshots.append(bundle / "slide-01-1440x900.png")
+                diagnostics.append(diagnostic)
+                raise OSError("later worker failed")
+
+            with patch.object(MODULE, "verify_deck", side_effect=deck), \
+                 patch.object(MODULE, "run_browser") as browse:
+                with self.assertRaisesRegex(ValueError, "later worker failed"):
+                    MODULE.verify("deck", output, bundle_dir=bundle)
+            browse.assert_not_called()
+            report = json.loads((bundle / "diagnostics.json").read_text())
+            self.assertEqual(report["screenshots"], ["slide-01-1440x900.png"])
+            self.assertEqual(report["diagnostics"], [diagnostic])
+            self.assertEqual(report["failures"], ["browser verification incomplete: later worker failed"])
+            contact = (bundle / "contact-sheet.html").read_text()
+            self.assertIn("slide-01-1440x900.png", contact)
+            self.assertIn("later worker failed", contact)
+
+
+class DeckBrowserRegressionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output = Path(directory.name) / "deck.html"
+        self.output.write_text('<button data-verify-target="#modal">Open</button>')
+        self.bundle = Path(directory.name) / "evidence"
+        self.metadata = {"count": 3, "controls": []}
+        for target, kwargs in (("lint", {}), ("run_browser", {"side_effect": self.browse})):
+            patcher = patch.object(MODULE, target, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(MODULE.shutil, "which", return_value="/browser")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.serial_deck = patch.object(
+            MODULE, "verify_deck",
+            side_effect=lambda *args, **kwargs: VERIFY_DECK(
+                *args, **kwargs, _viewports=((1440, 900), (1263, 863))),
+        )
+        self.serial_deck.start()
+        self.addCleanup(self.serial_deck.stop)
+
+    def browse(self, command: list[str], *, capture: bool = False) -> str:
+        if not capture:
+            return ""
+        if command[-1] == "errors":
+            return "No page errors"
+        if command[-1] == "document.querySelectorAll('[data-verify-target]').length":
+            return json.dumps(len(self.metadata["controls"]))
+        if "JSON.stringify({count:" in command[-1]:
+            return json.dumps(self.metadata)
+        return json.dumps("body > button:nth-child(1)")
+
+    def batch_results(self, commands: list[list[str]]) -> list[dict]:
+        results = []
+        hashes = iter(("#page-2", "#page-1"))
+        for command in commands:
+            value = {} if command == ["eval", MODULE.diagnostics_script("deck")] else True
+            if command == ["eval", "location.hash"]:
+                value = next(hashes)
+            results.append({"success": True, "result": {"result": value}})
+        return results
+
+    def report(self) -> dict:
+        return json.loads((self.bundle / "diagnostics.json").read_text())
+
+    def test_partial_scope_reports_only_selected_slides_and_skips_interactions(self) -> None:
+        def batch(_browser, _session, commands):
+            return self.batch_results(commands)
+
+        with patch.object(MODULE, "browser_batch", side_effect=batch) as batches, \
+             patch("builtins.print") as print_result:
+            MODULE.verify("deck", self.output, bundle_dir=self.bundle, slides=[2], skip_interactions=True)
+        report = self.report()
+        self.assertEqual(report["scope"], {"slides": [2], "skip_interactions": True})
+        self.assertEqual([(item["slide"], item["viewport"]) for item in report["diagnostics"]],
+                         [(2, "1440x900"), (2, "1263x863")])
+        self.assertEqual(report["screenshots"], ["slide-02-1440x900.png", "slide-02-1263x863.png"])
+        self.assertEqual(report["failures"], [])
+        self.assertEqual(batches.call_count, 2)
+        self.assertIn("partial check", print_result.call_args_list[0].args[0])
+        contact = (self.bundle / "contact-sheet.html").read_text()
+        for screenshot in report["screenshots"]:
+            self.assertIn(screenshot, contact)
+
+    def test_diagnostic_errors_include_slide_and_viewport(self) -> None:
+        def batch(_browser, _session, commands):
+            results = self.batch_results(commands)
+            results[-1]["result"]["result"] = {"tinyText": ["#caption"], "rootOverflow": True}
+            return results
+
+        with patch.object(MODULE, "browser_batch", side_effect=batch):
+            with self.assertRaisesRegex(ValueError, "slide 2 at 1440x900: tinyText"):
+                MODULE.verify("deck", self.output, bundle_dir=self.bundle, slides=[2], skip_interactions=True)
+        failures = self.report()["failures"]
+        for viewport in ("1440x900", "1263x863"):
+            self.assertIn(f"slide 2 at {viewport}: tinyText: ['#caption']", failures)
+            self.assertIn(f"slide 2 at {viewport}: unexpected root overflow", failures)
+
+    def test_failed_middle_slide_reloads_and_continues_later_states(self) -> None:
+        for retry_succeeds in (True, False):
+            with self.subTest(retry_succeeds=retry_succeeds):
+                retries = []
+
+                def batch(_browser, _session, commands):
+                    results = self.batch_results(commands)
+                    if commands[0][0] == "open":
+                        retries.append(commands)
+                        if not retry_succeeds:
+                            results[4] = {"success": False, "error": "capture failed again"}
+                    else:
+                        results[6] = {"success": False, "error": "middle capture failed"}
+                    return results
+
+                with patch.object(MODULE, "browser_batch", side_effect=batch):
+                    if retry_succeeds:
+                        MODULE.verify("deck", self.output, bundle_dir=self.bundle, skip_interactions=True)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "slide 2 at 1440x900: browser step failed"):
+                            MODULE.verify("deck", self.output, bundle_dir=self.bundle, skip_interactions=True)
+                report = self.report()
+                expected_slides = [1, 2, 3] if retry_succeeds else [1, 3]
+                self.assertEqual([item["slide"] for item in report["diagnostics"]], expected_slides * 2)
+                self.assertEqual(len(report["screenshots"]), len(expected_slides) * 2)
+                self.assertEqual(len(retries), 2)
+                for commands in retries:
+                    self.assertTrue(commands[0][1].startswith(self.output.resolve().as_uri() + "?verify="))
+                    self.assertEqual(commands[1][0:2], ["set", "viewport"])
+                    self.assertEqual(commands[2], ["eval", MODULE.prepare_script()])
+                    self.assertEqual(commands[3], ["eval", MODULE.slide_script(2)])
+                if retry_succeeds:
+                    self.assertEqual(report["failures"], [])
+                else:
+                    for viewport in ("1440x900", "1263x863"):
+                        self.assertTrue(any(f"slide 2 at {viewport}" in failure and
+                                            "capture failed again" in failure for failure in report["failures"]))
+
+    def test_missing_batch_recovers_each_slide_and_checks_next_viewport(self) -> None:
+        first_batch = True
+
+        def batch(_browser, _session, commands):
+            nonlocal first_batch
+            if first_batch:
+                first_batch = False
+                raise ValueError("Browser batch failed: incomplete batch response")
+            return self.batch_results(commands)
+
+        with patch.object(MODULE, "browser_batch", side_effect=batch) as batches:
+            with self.assertRaisesRegex(ValueError, "1440x900: Browser batch failed"):
+                MODULE.verify("deck", self.output, bundle_dir=self.bundle, skip_interactions=True)
+        self.assertEqual(batches.call_count, 5)
+        self.assertEqual([item["slide"] for item in self.report()["diagnostics"]], [1, 2, 3] * 2)
+        self.assertEqual(len(self.report()["screenshots"]), 6)
+
+    def test_failed_control_retries_whole_state_and_continues_next_control(self) -> None:
+        self.metadata["controls"] = [
+            {"i": 0, "slide": 1, "target": "#first-modal",
+             "selector": "body > section:nth-child(1) > button:nth-child(1)"},
+            {"i": 1, "slide": 3, "target": "#later-modal",
+             "selector": "body > section:nth-child(3) > button:nth-child(1)"},
+        ]
+        interactions = []
+
+        def batch(_browser, _session, commands):
+            results = self.batch_results(commands)
+            if len(commands) == 11 and commands[0][0] == "open":
+                interactions.append(commands)
+                for index, visible in ((3, False), (6, True), (10, False)):
+                    results[index]["result"]["result"] = visible
+                if "#first-modal" in commands[3][1]:
+                    results[4] = {"success": False, "error": "click failed"}
+            return results
+
+        with patch.object(MODULE, "browser_batch", side_effect=batch):
+            with self.assertRaisesRegex(ValueError, r"control 1 [(]slide 1[)]: click failed"):
+                MODULE.verify("deck", self.output, bundle_dir=self.bundle)
+        self.assertEqual(len(interactions), 3)
+        self.assertEqual(interactions[0][0][0], "open")
+        self.assertEqual(len(interactions[0]), 11)
+        self.assertEqual(interactions[1][0][0], "open")
+        self.assertTrue(interactions[1][0][1].startswith(self.output.resolve().as_uri() + "?verify="))
+        self.assertEqual(interactions[0], interactions[1])
+        self.assertEqual(interactions[2][0][0], "open")
+        self.assertEqual(interactions[0][4], ["click", self.metadata["controls"][0]["selector"]])
+        self.assertEqual(interactions[2][4], ["click", self.metadata["controls"][1]["selector"]])
+        self.assertIn("#later-modal", interactions[2][3][1])
+        report = self.report()
+        self.assertIn("interaction-02.png", report["screenshots"])
+        self.assertEqual(report["failures"], ["control 1 (slide 1): click failed: click failed"])
+
+    def test_parallel_workers_use_isolated_sessions_and_merge_in_job_order(self) -> None:
+        self.serial_deck.stop()
+        self.output.write_text('<button data-verify-target="#modal">Open</button>' * 4)
+        self.metadata["controls"] = [
+            {"i": 0, "slide": 2, "target": "#modal",
+             "selector": "body > section:nth-child(2) > button:nth-child(1)"},
+        ]
+        barrier = threading.Barrier(6, timeout=5)
+        interaction_closed = threading.Event()
+        narrow_closed = threading.Event()
+        lock = threading.Lock()
+        roles = {}
+        completion_order = []
+        lifecycle = []
+
+        def batch(_browser, session, commands):
+            session = session.removeprefix("presentation-verify-")
+            role = ("interactions" if any(command == ["click", "#next-btn"] for command in commands)
+                    else "x".join(commands[0][2:4]) if commands[0][:2] == ["set", "viewport"]
+                    else "interactions")
+            with lock:
+                first_batch = session not in roles
+                roles[session] = role
+            if first_batch:
+                barrier.wait()
+            results = self.batch_results(commands)
+            if len(commands) == 11 and commands[0][0] == "open":
+                for index, visible in ((3, False), (6, True), (10, False)):
+                    results[index]["result"]["result"] = visible
+            return results
+
+        def browse(command, *, capture=False):
+            session = command[2]
+            self.assertEqual(command[3:12], ["--namespace", session, "--pin-tab",
+                                             "--no-webmcp", "--headed", "false",
+                                             "--args", "--disable-quic", "--allow-file-access"])
+            if command[-2] == "open" or command[-1] == "close":
+                with lock:
+                    lifecycle.append((session, "open" if command[-2] == "open" else "close"))
+            role = roles.get(session)
+            if command[-1] == "errors" and role:
+                return role + " page error"
+            if command[-1] == "close" and role:
+                # Complete in reverse order so completion-order merging cannot pass.
+                if role == "1440x900":
+                    self.assertTrue(narrow_closed.wait(5), "narrow worker did not finish")
+                elif role == "1263x863":
+                    self.assertTrue(interaction_closed.wait(5), "interaction worker did not finish")
+                with lock:
+                    completion_order.append(role)
+                    if completion_order.count("interactions") == 4:
+                        interaction_closed.set()
+                if role == "1263x863":
+                    narrow_closed.set()
+            return self.browse(command, capture=capture)
+
+        with patch.object(MODULE, "browser_batch", side_effect=batch), \
+             patch.object(MODULE, "run_browser", side_effect=browse):
+            with self.assertRaisesRegex(ValueError, "browser page errors"):
+                MODULE.verify("deck", self.output, bundle_dir=self.bundle)
+        self.assertEqual(completion_order, ["interactions"] * 4 + ["1263x863", "1440x900"])
+        self.assertEqual(len(roles), 6)
+        self.assertEqual(set(roles.values()), {"1440x900", "1263x863", "interactions"})
+        self.assertEqual({session for session, _action in lifecycle}, set(roles))
+        for session in roles:
+            self.assertEqual(lifecycle.count((session, "open")), 1)
+            self.assertEqual(lifecycle.count((session, "close")), 1)
+        report = self.report()
+        self.assertEqual(report["scope"], {"slides": None, "skip_interactions": False})
+        self.assertEqual([(item["slide"], item["viewport"]) for item in report["diagnostics"]],
+                         [(slide, viewport) for viewport in ("1440x900", "1263x863")
+                          for slide in (1, 2, 3)])
+        expected_images = [f"slide-{slide:02d}-{viewport}.png"
+                           for viewport in ("1440x900", "1263x863") for slide in (1, 2, 3)]
+        expected_images.append("interaction-01.png")
+        self.assertEqual(report["screenshots"], expected_images)
+        self.assertEqual(report["failures"], [
+            "browser page errors: 1440x900 page error",
+            "browser page errors: 1263x863 page error",
+        ] + ["browser page errors: interactions page error"] * 4)
+        contact = (self.bundle / "contact-sheet.html").read_text()
+        positions = [contact.index('href="' + name + '"') for name in expected_images]
+        self.assertEqual(positions, sorted(positions))
+
+
 class ExportTests(unittest.TestCase):
     def test_page_export_paths_use_html_stem(self) -> None:
         output = Path("/tmp/review.html")
@@ -285,11 +684,11 @@ class ExportTests(unittest.TestCase):
                     check=True,
                 ),
                 call(
-                    ["/agent-browser", "--session", "presentation-export-review", "screenshot", "/tmp/review-section-images/section-01.png"],
+                    ["/agent-browser", "--session", "presentation-export-review", "--allow-file-access", "screenshot", "/tmp/review-section-images/section-01.png"],
                     check=True,
                 ),
                 call(
-                    ["/agent-browser", "--session", "presentation-export-review", "screenshot", "/tmp/review-section-images/section-02.png"],
+                    ["/agent-browser", "--session", "presentation-export-review", "--allow-file-access", "screenshot", "/tmp/review-section-images/section-02.png"],
                     check=True,
                 ),
                 call(
