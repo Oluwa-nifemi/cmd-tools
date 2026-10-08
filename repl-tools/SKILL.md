@@ -1,131 +1,60 @@
 ---
 name: repl-tools
-description: Use the project-scoped nREPL tools to evaluate Clojure code or inspect an nREPL. Trigger when working with Clojure REPLs, evaluating Clojure code, running Clojure tests through a REPL, or debugging a Clojure project with nREPL. Do not use for non-Clojure REPLs or generic shell evaluation.
+description: Evaluate Clojure code and run Clojure tests through a project-scoped nREPL using runrepl, runtests, startrepl, killrepl and repls. Use whenever the task involves a Clojure/Leiningen project REPL: evaluating forms, reloading namespaces, running clojure.test tests, starting or stopping the dev system ((go), (user/stop)), a stuck or stale or out-of-memory REPL, REPL memory use, or Postgres "connection slots" errors from dev systems. Make sure to use it even if the user only says "run this test", "check it in the REPL" or "restart the REPL", and prefer it over calling lein repl or clj-nrepl-eval directly. Not for ClojureScript browser REPLs, non-Clojure REPLs, or plain shell commands.
 ---
 
 # Project-scoped nREPL
 
-Run `runrepl` from the project directory. Do not call `lein repl` directly.
-`runrepl` resolves the REPL for that worktree and starts one when needed.
+Run tools from the project directory. They resolve the REPL for that worktree
+and start one when needed. A first call on a cold project starts the REPL and
+then evaluates in the same call (about 40s), so do not retry or start a second
+one while it runs.
 
-Do not use `clj-nrepl-eval --discover-ports`. It can select a REPL from another
-worktree.
-
-Use:
+Never run `lein repl` (it starts a JVM the registry, cap and cleanup cannot
+see). Never use `clj-nrepl-eval --discover-ports` (it can pick a REPL from
+another worktree).
 
 ```sh
 runrepl '(+ 1 2)'
 runrepl --no-start '(+ 1 2)'
-runrepl --fresh '(+ 1 2)'    # kill existing REPL, start fresh, then evaluate
+runrepl --fresh '(+ 1 2)'      # kill REPL, start clean, evaluate (~40s, loses state)
+runrepl --port-owner 3000 '(user/stop)'   # target the worktree whose app holds port 3000
+runtests TEST_NS [SOURCE_NS...]           # reload sources + tests, run tests, one call
 startrepl
-watchrepl
-killrepl          # kill REPL for the current project
-killrepl 2        # kill REPL #2 from `repls` listing
-seerepl 1         # tail log for REPL #1 without cd-ing into its project
-gotorepl 1        # cd into REPL #1's project directory
+killrepl [N]                   # current project, or REPL #N from `repls`
+repls                          # list live REPLs
 ```
 
-## Startup behavior
+## Do not run these bare (they hang agents)
 
-A first `runrepl` call may start the REPL and return only the startup
-confirmation. When this happens, send the expression again in a second call.
-`runrepl` prints "starting REPL for ..." to stderr when it launches a new
-process. If you see that message and no evaluation result, retry the same
-expression.
+- `watchrepl` / `seerepl` run `tail -f` and never exit. Use `watchrepl --no-follow [N]` (last 80 log lines, exits).
+- `gotorepl` opens an interactive subshell. Use `gotorepl --print [N]` to get the path.
 
-## Automatic cleanup
+## Running tests
 
-`startrepl`, `runrepl` and `repls` stop a REPL when its worktree folder is
-deleted or it has been idle for 24 hours (`ZED_CLOJURE_REPL_IDLE_SECONDS`).
-Starting a REPL also evicts the least recently used one at the cap of 3
-(`ZED_CLOJURE_MAX_REPLS`), like the editor. A REPL serving an app on a
-non-loopback port is never stopped by idleness or the cap.
+`runtests ardoq.foo-test ardoq.foo` reloads the source ns, then the test ns,
+then runs the tests. Reloading both is needed, or you test old code. The exit
+code is non-zero on failures or errors. Check the last lines of output for
+`Ran N tests...` and `F failures, E errors.`, because app logs can bury them.
 
-## Test workflow
-
-Before running Clojure tests, reload both the changed source namespace and
-its test namespace.
+`require :reload` does not remove deleted or renamed vars, so an old test keeps
+running. Unmap it, then rerun:
 
 ```sh
-runrepl '(require (quote ardoq.some.namespace) :reload)'
-runrepl '(require (quote ardoq.some.namespace-test) :reload)'
-runrepl '(clojure.test/run-tests (quote ardoq.some.namespace-test))'
+runrepl '(ns-unmap (quote ardoq.foo-test) (quote old-test-name))'
 ```
 
-After running tests, check the **final lines** of output for the summary:
+Use `runrepl --fresh` only when stale state is widespread.
 
-```
-Ran N tests containing M assertions.
-F failures, E errors.
-```
+## Other tools
 
-Large application logs can bury this summary. Scroll past log noise to find
-the `Ran ...` / `failures` / `errors` lines at the end.
+- `pgslots [--reclaim]`: every `(go)` fails with "remaining connection slots are reserved". This is a full local Postgres pool, not a broken REPL. Run `pgslots`, then `pgslots --reclaim` (frees idle backends, safe).
+- `repl-memory [--kill N]`: show JVM memory of REPLs and Clojure LSP; stop one.
 
-When `runrepl` reports test failures (non-zero exit), treat the run as failed
-even if the log output looks noisy.
+## When something fails
 
-## Stale vars after rename or delete
-
-Clojure's `require :reload` does **not** remove vars that were deleted or
-renamed in the source file. The old var stays interned in the namespace and
-continues to run as a test.
-
-When you know the old var name, unmap it explicitly:
-
-```sh
-runrepl '(ns-unmap (quote ardoq.some.namespace-test) (quote old-test-name))'
-```
-
-Then reload and re-run:
-
-```sh
-runrepl '(require (quote ardoq.some.namespace-test) :reload)'
-runrepl '(clojure.test/run-tests (quote ardoq.some.namespace-test))'
-```
-
-Use `runrepl --fresh` to kill and restart the REPL only as a last resort,
-when stale state is unknown or widespread. It is slower (~40s) and loses all
-loaded state.
-
-## Sandbox note
-
-`runrepl` reads `~/.cache/zed-clojure-repl/registry.json`, which lives
-outside the workspace. In Codex, the first call may need sandbox approval.
-Retry with escalation if it fails with a permission error.
-
-## Failure handling
-
-If no REPL can be resolved or started, stop and report the failure. Do not
-guess a port or choose another project's REPL.
-
-When a project REPL is stale, disconnected, or unresponsive, do not waste
-time debugging that session. Kill it with `killrepl`, start a clean one with
-`startrepl`, reload the required namespaces, and retry once. If the fresh
-REPL also fails, report the concrete failure.
-
-Starting a REPL can take up to 240s on a busy machine
-(`ZED_CLOJURE_REPL_START_SECONDS`). A normal startup still returns once it is
-ready, and a failed startup returns at once. Let the invocation that started it finish.
-Do not run a second `startrepl` or `runrepl` for the same project while it is
-running. A second caller waits on the startup lock for the same 240s
-(`ZED_CLOJURE_REPL_LOCK_WAIT_SECONDS`), then fails with the lock path and
-owner PID. Give the command at least 250s before your tool call times out, or
-you will not see that error.
-
-If startup or the lock wait times out, run `killrepl --force` for that
-project. It stops the REPL, or a startup that has not registered yet, and
-clears the startup lock. Then run `startrepl` once, reload the namespaces, and
-retry once. If that also fails, report the error and stop.
-
-## Heap limit
-
-Every Leiningen REPL gets a 4 GB heap from `:jvm-opts ["-Xmx4g"]` in
-`~/.lein/profiles.clj`. It was sized from measurements: a heavy test
-namespace peaked at about 2.9 GB, with 0.6 GB live after garbage collection.
-
-If a test, `(go)` or an evaluation fails with `java.lang.OutOfMemoryError`,
-first rule out a runaway result, such as printing a huge collection. If the
-work is legitimate, change `-Xmx4g` to `-Xmx6g` in that file. Then run
-`killrepl` and `startrepl`, because a running REPL keeps its old limit. Tell
-the user you raised it.
+- No REPL can be resolved or started: stop and report. Do not guess a port.
+- REPL stale, disconnected or unresponsive: `killrepl`, `startrepl`, reload namespaces, retry once. If it fails again, report the error. Debugging a dead session wastes time.
+- Startup or lock wait times out (lock path and owner PID in the error): `killrepl --force`, `startrepl` once, retry once, then report.
+- `OutOfMemoryError`, timeouts, env vars, auto-cleanup: read [references/troubleshooting.md](references/troubleshooting.md).
+- `runrepl` reads `~/.cache/zed-clojure-repl/registry.json`, outside the Codex workspace. On a permission error, retry with escalation.

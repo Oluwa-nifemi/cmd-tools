@@ -4,6 +4,14 @@ set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 . "$SCRIPT_DIR/repl-lib.sh"
 
+# --no-follow prints the last 80 log lines and exits. Plain watchrepl runs
+# `tail -f`, which never exits and stalls any caller that waits for it (agents).
+follow=true
+if [ "${1:-}" = "--no-follow" ] || [ "${1:-}" = "-n" ]; then
+    follow=false
+    shift
+fi
+
 if [ "$#" -eq 1 ] && printf '%s\n' "$1" | grep -qE '^[0-9]+$'; then
     # Index from `repls` listing — resolve without needing to cd into the project
     root="$(resolve_worktree_by_index "$1")"
@@ -38,5 +46,9 @@ if [ -z "$log_path" ]; then
     exit 1
 fi
 
+if [ "$follow" = false ]; then
+    tail -n 80 "$log_path"
+    exit 0
+fi
 echo "Tailing $log_path (Ctrl-C to stop)." >&2
 tail -n 80 -f "$log_path"

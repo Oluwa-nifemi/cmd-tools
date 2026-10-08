@@ -1,0 +1,22 @@
+#!/bin/sh
+# Reload source and test namespaces, then run the tests, in ONE runrepl call.
+# Three separate calls each pay client startup, and agents skip the reloads.
+# Exit code comes from runrepl, which turns clojure.test failures into non-zero.
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: runtests TEST_NS [SOURCE_NS...]" >&2
+    exit 2
+fi
+
+test_ns="$1"
+shift
+
+forms=""
+for ns in "$@" "$test_ns"; do
+    forms="$forms (require (quote $ns) :reload)"
+done
+
+exec "$SCRIPT_DIR/runrepl" "(do $forms (clojure.test/run-tests (quote $test_ns)))"
