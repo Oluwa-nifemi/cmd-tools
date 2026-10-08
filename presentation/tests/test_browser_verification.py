@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -12,16 +13,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "presentation_artifact.py"
-TEMPLATES = {
-    "deck": "template.html",
-    "page": "page-template.html",
-    "interactive": "interactive-template.html",
-}
-
-
 def create_artifact(format_name: str, output: Path) -> Path:
     output = Path(output)
-    text = (ROOT / TEMPLATES[format_name]).read_text(encoding="utf-8")
+    subprocess.run([sys.executable, str(SCRIPT), "init", "--format", format_name,
+                    "--output", str(output)], check=True, capture_output=True, text=True)
+    text = output.read_text(encoding="utf-8")
     for old, new in {
         "TITLE_PLACEHOLDER": "Browser verification",
         "SUBTITLE_PLACEHOLDER": "Local browser regression checks.",
@@ -31,9 +27,6 @@ def create_artifact(format_name: str, output: Path) -> Path:
         "Example chapter — delete me": "An input produces twice its value",
     }.items():
         text = text.replace(old, new)
-    # CDN availability must not decide whether a local interaction works.
-    text = re.sub(r'<link\b[^>]*href="https://[^"]*"[^>]*>', "", text)
-    text = re.sub(r'<script\b[^>]*src="https://[^"]*"[^>]*></script>', "", text)
     if format_name == "deck":
         slides = []
         for index in (1, 2):
@@ -44,7 +37,7 @@ def create_artifact(format_name: str, output: Path) -> Path:
                 f'<button id="evidence-{index}" class="see-code-btn" '
                 'data-verify-target="#code-modal">View implementation excerpt</button>'
                 # The template handler reads nextElementSibling, not a target ID.
-                f'<div class="see-code-src"><pre><code>evidence {index}</code></pre></div>'
+                f'<div class="see-code-src"><pre><code class="language-javascript">const evidence = {index};</code></pre></div>'
                 '</section>'
             )
         text = re.sub(
@@ -131,6 +124,31 @@ class BrowserVerificationTests(unittest.TestCase):
         self.assertIn("interaction-01.png", report["screenshots"])
         self.assertIn("interaction-02.png", report["screenshots"])
         self.assertEqual(report["scope"], {"slides": None, "skip_interactions": False})
+
+    def test_local_highlighting_works_with_external_requests_blocked(self) -> None:
+        self.deck()
+        spec = importlib.util.spec_from_file_location("offline_verifier", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        session = "presentation-verify-offline"
+        commands = [["open"], ["network", "route", "https://**", "--abort"],
+                    ["open", self.output.resolve().as_uri()],
+                    ["click", "#evidence-1"],
+                    ["eval", "JSON.stringify({version:window.hljs?.versionString,"
+                     "spans:document.querySelectorAll('#code-modal .hljs-keyword').length,"
+                     "color:getComputedStyle(document.querySelector('#code-modal code')).color,"
+                     "external:performance.getEntriesByType('resource').filter(r=>r.name.startsWith('http')).length})"],
+                    ["close"]]
+        try:
+            results = module.browser_batch("agent-browser", session, commands)
+            self.assertTrue(all(item.get("success") for item in results), results)
+            result = module.batch_value(results[4])
+            self.assertEqual(result["version"], "11.10.0")
+            self.assertGreater(result["spans"], 0)
+            self.assertEqual(result["color"], "rgb(56, 58, 66)")
+            self.assertEqual(result["external"], 0)
+        finally:
+            module.run_browser(module.browser_command("agent-browser", session, "close"))
 
     def test_healthy_page_checks_full_height_and_sections(self) -> None:
         create_artifact("page", self.output)

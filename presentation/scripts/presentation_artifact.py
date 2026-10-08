@@ -20,6 +20,8 @@ from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parent.parent
+HIGHLIGHT_ASSETS = Path("assets/highlightjs-11.10.0")
+HIGHLIGHT_FILES = ("highlight.min.js", "atom-one-light.min.css", "LICENSE")
 TEMPLATES = {
     "deck": ROOT / "template.html",
     "page": ROOT / "page-template.html",
@@ -234,6 +236,11 @@ def initialize(format_name: str, output: Path) -> None:
     template = TEMPLATES[format_name]
     if not template.is_file():
         raise ValueError(f"Missing template: {template}")
+    if format_name == "deck":
+        for name in HIGHLIGHT_FILES:
+            source = ROOT / HIGHLIGHT_ASSETS / name
+            if not source.is_file():
+                raise ValueError(f"Missing bundled asset: {source}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
@@ -242,6 +249,13 @@ def initialize(format_name: str, output: Path) -> None:
         shutil.copy2(output, backup)
         print(f"Backed up existing artifact: {backup}")
 
+    if format_name == "deck":
+        asset_dir = output.parent / HIGHLIGHT_ASSETS
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        for name in HIGHLIGHT_FILES:
+            source, target = ROOT / HIGHLIGHT_ASSETS / name, asset_dir / name
+            if source.resolve() != target.resolve():
+                shutil.copy2(source, target)
     shutil.copy2(template, output)
     print(f"Created {format_name} artifact: {output}")
 

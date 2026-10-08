@@ -51,6 +51,9 @@ description: Build a self-contained HTML deck, one-page presentation, or interac
 
    Do not read the script or any template file. The initializer selects
    the template and backs up an existing output automatically.
+   For decks, it also copies bundled syntax-highlighting files to
+   `assets/highlightjs-11.10.0/` beside the HTML. Keep that folder with the HTML
+   when moving or sharing the deck. No CDN download is needed.
    `lint` checks source structure. `verify` opens the artifact with
    `agent-browser`, checks rendered geometry and interactions, and writes a
    verification bundle beside the artifact. Both must pass.

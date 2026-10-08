@@ -15,6 +15,10 @@ If an output exists during a new render, the initializer copies it to a timestam
 `.presentation-backups/` beside the output. It does not read or merge that
 backup. It then creates a fresh artifact from the selected template.
 
+Deck initialization also copies local syntax-highlighting files to
+`assets/highlightjs-11.10.0/` beside the HTML. Move or share this folder with
+the HTML. To view a backup, restore it beside that asset folder first.
+
 Read these files in this order:
 
 1. [content-quality.md](content-quality.md) — required for every artifact.

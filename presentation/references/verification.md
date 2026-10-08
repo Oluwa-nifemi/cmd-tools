@@ -28,6 +28,8 @@ Failed browser states retry once from a fresh page. Browser
 failures still produce diagnostics and a contact sheet with completed evidence.
 Verification browsers disable HTTP/3, which reduced CDN load time in local probes.
 They still load the artifact's normal external resources.
+New decks use bundled local highlighting files instead of a CDN.
+Initialization copies `assets/highlightjs-11.10.0/` beside the HTML.
 
 For a small deck revision, use `--slides 6,8` to check only those slides and
 their controls. Use `--skip-interactions` for geometry-only checks. Both are
