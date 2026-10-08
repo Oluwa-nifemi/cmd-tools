@@ -1,6 +1,6 @@
 ---
 name: confident-ai-trace-audit
-description: Audit a set of Confident AI traces end to end. Fetch the traces, measure latency, tokens and scores with scripts, split per-unit analysis across one sub-agent per unit, count the patterns they find across every trace, verify suspected bugs, rank fixes, and optionally hand off a presentation. Use when the user asks to analyse Confident AI traces, compare two modes, versions or prompts on the same questions, find why an agent is slow, expensive or wrong, or find odd model behaviour in traces.
+description: Audit a set of Confident AI traces end to end. Find the traces from a plain description of the runs (time, agent, org), confirm them with the user, fetch them, measure latency, tokens and scores with scripts, split per-unit analysis across one sub-agent per unit, count the patterns they find across every trace, verify suspected bugs, rank fixes, and optionally hand off a presentation. Use when the user asks to analyse Confident AI traces, compare two modes, versions or prompts on the same questions, find why an agent is slow, expensive or wrong, or find odd model behaviour in traces.
 ---
 
 # Confident AI trace audit
@@ -11,21 +11,24 @@ and ranked fixes. Optionally end with a deck.
 Scripts do the counting. Sub-agents explain what happened. Never ship a number that a
 sub-agent estimated.
 
-The person only gives a trace source and a short prompt. You, the agent, decide everything
-else: groups, units, which tools only format, which tools hide waits, profile.py, and
-custom counters. Do not hand configuration back to the person.
+The person only describes what they ran, for example "I ran the eval on org mcptest
+this morning, code exec vs direct, 3 runs each". You find the traces, confirm the set
+with the person once, and decide everything else: groups, units, which tools only
+format, which tools hide waits, profile.py, and custom counters. Do not hand
+configuration back to the person.
 
 ## Start
 
-Work out each item below from the prompt, the sheet, and the traces. Do not ask about an
-item you can infer. Write every inferred choice under "Assumptions" in the notes. Ask only
-when a wrong guess would change the result and the data cannot settle it (for example
-which group is the baseline when nothing says so). If the person said not to ask, never ask.
+Work out each item below from the prompt and the traces. Do not ask about an item you can
+infer. Write every inferred choice under "Assumptions" in the notes. Apart from the trace
+confirmation in Phase 1, ask only when a wrong guess would change the result and the data
+cannot settle it. If the person said not to ask, never ask.
 
-1. **Trace source.** A sheet or CSV of trace ids, a list of Confident uuids, or "recent
-   traces of agent X". Sheet ids are often OTel ids; the fetch script handles that.
-2. **Comparison.** Read groups and run numbers from the sheet's column names. Default: one
-   group per mode or version column set; the older or "without" group is the baseline.
+1. **Trace source.** Usually a description: when, which agent, which org or user, what
+   was run. Sometimes a sheet or list of ids instead; then skip discovery. Sheet ids are
+   often OTel ids; the fetch script handles that.
+2. **Comparison.** From the description, the time clusters, or a sheet's column names.
+   Default: the older or "without" group is the baseline.
 3. **Analysis unit.** Default: one question with all its runs from every group.
 4. **Focus.** Default: latency, tokens, correctness, and tool use. Treat effects the prompt
    calls known as already measured.
@@ -42,10 +45,23 @@ current repo (or `/tmp/<topic>-trace-audit/`). Copy
 
 Read [references/fetching.md](references/fetching.md).
 
-1. Write `manifest.csv`: one row per trace with `trace_id,unit,group,run,score,label`.
-   Only `trace_id` is required. Build it from the sheet with a short script.
-2. Run `scripts/fetch.py --audit <dir>` with network escalation.
-3. **Gate:** the fetch report shows every trace fetched. Retry missing ids with the other
+1. **Find the traces** (skip when the person gave ids). Turn the description into filters
+   and run `scripts/discover.py` with network escalation:
+   `--since/--until` (UTC; convert local times), `--name` (agent), `--meta key=value`
+   (for example `org_label`), and `--with-question`. Start wide, then narrow. It
+   writes `candidates.csv` and prints one summary per time cluster: count, time range,
+   shared and varying metadata, and the questions.
+2. **Confirm with the person once.** Show each cluster as one line: time range, count,
+   distinct questions, what you think it is (for example "direct run 2"), and whether you
+   plan to include it. Ask which clusters are in or out, and flag oddities: duplicate
+   questions, errored traces, a cluster with fewer questions. If the person said not to
+   ask, include the clusters that match the description and record the choice.
+3. Write `manifest.csv`: one row per trace with `trace_id,unit,group,run,score,label`.
+   Only `trace_id` is required. From candidates: `unit` = a stable id per distinct
+   question, `group` and `run` from the confirmed cluster labels.
+4. Run `scripts/fetch.py --audit <dir>` with network escalation. It reuses traces that
+   discover.py already downloaded.
+5. **Gate:** the fetch report shows every trace fetched. Retry missing ids with the other
    key or a wider `--since`. If ids are still missing, list them in the notes and in the
    final report. Do not silently drop units.
 

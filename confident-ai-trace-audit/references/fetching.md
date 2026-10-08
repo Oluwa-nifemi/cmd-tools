@@ -1,5 +1,22 @@
 # Fetching traces
 
+## Discovering traces from a description
+
+`scripts/discover.py` lists the project and keeps traces inside a UTC window that match
+`--name`, each `--meta key=value`, and `--user-id`. Useful fields on list results:
+`startTime`, `latency`, `name`, `status`, `userId`, `threadId`, and `metadata`
+(for ardoq_assistant: `org_label`, `model`, `agent_type`, `user_id`, `trace_id`).
+The list has no input text, so `--with-question` downloads each candidate to read its
+first user message. Those files go to `raw/`, and fetch.py reuses them.
+
+- Runs started together form one time cluster (`--gap-min`, default 10 minutes). One
+  eval run usually shows as one cluster with one trace per question.
+- Labels such as "code exec" vs "direct" are often not in the metadata. Infer them from
+  the description and cluster order, then confirm with the person.
+- Pass the same `--meta` filters you would use to describe the run in words. Check
+  "varying metadata" in the summary: a key that varies where it should not means the
+  filter caught other runs.
+
 ## Manifest
 
 `manifest.csv` columns:
