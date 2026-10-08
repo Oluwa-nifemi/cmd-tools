@@ -15,7 +15,7 @@
 #                     worktree path as its first argument
 
 : "${WT_WORKTREES_DIR:=__NOT_CONFIGURED__}"
-: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .zed}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .zed AGENTS.md .agents local .codex/config.toml}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Worktree discovery

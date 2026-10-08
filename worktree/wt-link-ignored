@@ -9,8 +9,7 @@
 
 set -uo pipefail
 
-: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .zed}"
-: "${WT_CODEX_LINK_IGNORED:=local AGENTS.md .agents .codex/config.toml}"
+: "${WT_LINK_IGNORED:=CLAUDE.md CLAUDE.local.md .claude .env* .zed AGENTS.md .agents local .codex/config.toml}"
 : "${WT_LINK_IGNORED_RECURSIVE:=0}"
 
 warn() {
@@ -39,7 +38,7 @@ typeset -A linked_paths
 # `wt create`, default to top-level matches only; a recursive `**/.env*` scan is
 # fine in smaller repos but can hang setup for monorepos. Set
 # WT_LINK_IGNORED_RECURSIVE=1 if a repo genuinely needs nested ignored files.
-for pattern in ${=WT_LINK_IGNORED} ${=WT_CODEX_LINK_IGNORED}; do
+for pattern in ${=WT_LINK_IGNORED}; do
   matches=($main_worktree/${~pattern}(ND))
 
   if [[ "$WT_LINK_IGNORED_RECURSIVE" == "1" ]]; then
