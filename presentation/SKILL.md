@@ -11,9 +11,10 @@ description: Build a self-contained HTML deck, one-page presentation, or interac
 - **page**: one scrolling document.
 - **interactive**: a sticky visual model plus scrolling story chapters, for
   learning how something complex works. Use it ONLY when the user explicitly
-  asks for an interactive presentation. Otherwise use deck or page. It can
+  asks for an interactive presentation. Otherwise use deck or page, even for
+  deep-dive explainers. Why: it costs two agents and a long build. It can
   add clickable drill-down nodes, so the reader goes from the whole system
-  down to code. Deep-dive codebase explainers use this.
+  down to code.
 
 ## Workflow
 
@@ -63,9 +64,8 @@ description: Build a self-contained HTML deck, one-page presentation, or interac
 ## Interactive build
 
 This is an approved exception to the one-renderer rule. Dispatch two
-renderer sub-agents, one after the other. Both use model
-`anthropic-apikey/claude-opus-5-5`. Include the renderer line from step 2 in
-both prompts.
+renderer sub-agents, one after the other. Both inherit the caller's model.
+Include the renderer line from step 2 in both prompts.
 
 1. **Stage builder**: runs `init --format interactive`, builds the stage and
    explore controls, and writes the stage spec beside the artifact.
@@ -83,16 +83,18 @@ A renderer can stall while producing one long response. It then fails and
 loses everything it wrote in that response. Both prompts must tell the agent
 to follow "Write in small pieces" in the renderer guide.
 
-While an agent runs, check the artifact every 10 minutes. Look at its file
-size and modified time. Treat the agent as stuck in either case:
+After dispatch, run this once in the background instead of polling by hand:
 
-- the artifact is unchanged 15 minutes after dispatch, or
-- the artifact is unchanged for 20 minutes after that.
+```bash
+python3 scripts/stall_watch.py <output> [--stall-minutes 15] [--max-minutes 120]
+```
 
-When an agent is stuck, interrupt it. Send it the "Write in small pieces"
-rules and tell it to make an edit now. When an agent fails, resume the same
-agent with the same message. Do not start over. Tell the user about each
-stall.
+It exits 1 with `STALLED` when the artifact's size and modified time stay
+unchanged for the stall time. Why one script: hand polling was inconsistent.
+When it reports a stall, interrupt the agent. Send it the "Write in small
+pieces" rules and tell it to make an edit now. When an agent fails, resume
+the same agent with the same message. Do not start over. Tell the user about
+each stall.
 
 ## Feedback revisions
 

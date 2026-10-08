@@ -9,8 +9,9 @@ the fields below. Then add the fields from the file for its format:
 
 ## Hard requirement for the renderer
 
-The renderer MUST read the presentation SKILL.md in full before it writes any
-HTML. That file points to the invariants, templates, and verification steps.
+The renderer MUST read `references/renderer-guide.md` before it writes any
+HTML. It does not read SKILL.md, which holds caller-only rules (dispatching,
+stall watching). The guide points to the invariants and verification steps.
 Skipped invariants have broken artifacts before.
 
 ## Common schema
