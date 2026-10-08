@@ -153,15 +153,20 @@
     /* ── Print: flat document, all slides visible, chrome hidden ── */
     @page { size: 297mm 210mm; margin: 15mm 20mm; }
     @media print {
+      html { font-size: 90%; }
       body, #stage { position: static !important; height: auto !important; overflow: visible !important; }
       .slide {
         display: block !important; position: static !important; inset: auto !important;
         opacity: 1 !important; pointer-events: none; height: auto !important; min-height: 0 !important;
         overflow: visible !important; padding: 1.5rem 2rem 1rem !important;
-        border-bottom: 2px solid var(--rule); margin-bottom: 2rem;
+        margin: 0 !important; border: none !important;
+        break-after: page; page-break-after: always;
+        break-inside: avoid; page-break-inside: avoid;
       }
+      .slide:last-of-type { break-after: auto; page-break-after: auto; }
       #nav-controls, .toc-overlay, #toc-btn, .slide-counter, .export-btn, .nav-btn { display: none !important; }
       #code-modal { display: none !important; }
+      .see-code-btn { display: none !important; }
       .comment-popup, .comments-panel, .comment-toast, .comment-marker, .selection-comment-btn { display: none !important; }
       * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     }
