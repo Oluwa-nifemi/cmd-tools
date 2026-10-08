@@ -5,7 +5,7 @@ description: Coordinate substantial multi-agent work without becoming the primar
 
 # Orchestrate
 
-Act as the coordinator. Establish the outcome, decompose work, assign bounded units to fresh agents, maintain task ownership, select the right validation for each unit, and report the result. Do not take over a unit merely because it is convenient.
+Act as the coordinator. Establish the outcome, decompose work, assign bounded units to fresh agents, maintain task ownership, select the right validation for each unit, and report the result.
 
 Do not interrupt a healthy agent merely to obtain a status update. For builds, cluster setup, browser automation, E2E checks, migrations, and other long-running operations, wait for completion or an agent-reported blocker. Interrupt only for a concrete safety issue, changed user direction, a known stuck command, or an explicit request to stop.
 
@@ -24,7 +24,7 @@ The coordinator MUST NOT do implementation, debugging, investigation, fixing, or
 - Creating and switching branches (lightweight git plumbing)
 - Verifying a doer's verdict with one read-only command when a report is implausible
 
-If a sub-agent reports a failure, dispatch a fix agent or send the failure back to the original doer. Do not "quickly fix it yourself." If a one-line fix seems trivial, it is still a sub-agent's job — the coordinator's context is too expensive to spend on implementation, and the habit leads to scope creep.
+If a sub-agent reports a failure, dispatch a fix agent or send the failure back to the original doer. Do not "quickly fix it yourself", even for a one-line fix or a quick check. Why: the coordinator's context window is the scarcest resource in the run, and every log, file read, or test run in it displaces coordination. The habit also leads to scope creep.
 
 If a task requires a tool only the coordinator has access to (e.g. Browser, a specific MCP connector), dispatch a sub-agent for all preparatory and follow-up work and limit the coordinator's direct use of that tool to the irreducible minimum.
 
@@ -48,6 +48,7 @@ When a required source, integration, permission, or user-owned input is unavaila
    - Artifact: [references/artifact.md](references/artifact.md)
    - Mixed work: read every applicable reference and sequence the modes around their dependencies.
 4. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. Identify whether the active multi-agent surface is v1 or v2 and follow its dispatch contract.
+5. Pick each agent's model and effort from [references/model-tiers.md](references/model-tiers.md). Give code reviewers only [references/reviewer-brief.md](references/reviewer-brief.md); the coordinator does not read it.
 
 ## Mode choice
 
