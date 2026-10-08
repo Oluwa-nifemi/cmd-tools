@@ -11,22 +11,28 @@ and ranked fixes. Optionally end with a deck.
 Scripts do the counting. Sub-agents explain what happened. Never ship a number that a
 sub-agent estimated.
 
+The person only gives a trace source and a short prompt. You, the agent, decide everything
+else: groups, units, which tools only format, which tools hide waits, profile.py, and
+custom counters. Do not hand configuration back to the person.
+
 ## Start
 
-Ask only what the user has not already answered. If the user said not to ask, pick a
-reasonable default for each open item, write it under "Assumptions" in the notes, and go on.
+Work out each item below from the prompt, the sheet, and the traces. Do not ask about an
+item you can infer. Write every inferred choice under "Assumptions" in the notes. Ask only
+when a wrong guess would change the result and the data cannot settle it (for example
+which group is the baseline when nothing says so). If the person said not to ask, never ask.
 
 1. **Trace source.** A sheet or CSV of trace ids, a list of Confident uuids, or "recent
    traces of agent X". Sheet ids are often OTel ids; the fetch script handles that.
-2. **Comparison.** One set, or groups to compare (modes, versions, prompts). Which group is
-   the baseline? Are run numbers aligned across groups?
-3. **Analysis unit.** What one sub-agent reads: usually one question with all its runs
-   from every group. Can also be one trace or one session.
-4. **Focus.** Latency, tokens, cost, correctness, tool use, or all. Any known effects to
-   ignore (for example infra queueing already measured)?
-5. **Deliverable.** Notes only, notes plus a deck, or a one-page summary.
-6. **Data approval.** Downloading full traces can expose prompts and data. Confirm, and
-   store them under `/tmp` or a gitignored `local/` folder only.
+2. **Comparison.** Read groups and run numbers from the sheet's column names. Default: one
+   group per mode or version column set; the older or "without" group is the baseline.
+3. **Analysis unit.** Default: one question with all its runs from every group.
+4. **Focus.** Default: latency, tokens, correctness, and tool use. Treat effects the prompt
+   calls known as already measured.
+5. **Deliverable.** Default: notes only. Make a deck only when asked.
+6. **Data approval.** Downloading full traces can expose prompts and data. Go ahead if the
+   prompt or standing instructions approve it; otherwise ask. Store them under `/tmp` or
+   a gitignored `local/` folder only.
 
 Then create the audit folder, for example `local/<topic>-trace-audit/` in the
 current repo (or `/tmp/<topic>-trace-audit/`). Copy
@@ -37,18 +43,20 @@ current repo (or `/tmp/<topic>-trace-audit/`). Copy
 Read [references/fetching.md](references/fetching.md).
 
 1. Write `manifest.csv`: one row per trace with `trace_id,unit,group,run,score,label`.
-   Only `trace_id` is required. Build it from the user's sheet with a short script.
+   Only `trace_id` is required. Build it from the sheet with a short script.
 2. Run `scripts/fetch.py --audit <dir>` with network escalation.
-3. **Gate:** the fetch report shows every trace fetched. Report missing and ambiguous ids to
-   the user before continuing. Do not silently drop units.
+3. **Gate:** the fetch report shows every trace fetched. Retry missing ids with the other
+   key or a wider `--since`. If ids are still missing, list them in the notes and in the
+   final report. Do not silently drop units.
 
 ## Phase 2: Measure
 
 Read [references/metrics.md](references/metrics.md).
 
-1. Run `scripts/compact.py`, then `scripts/metrics.py`. Pass `--wait-tool` when one
-   tool's first call holds an infra wait (for example a sandbox or cold start).
-2. Cross-check against any numbers the user already has (eval sheet, Confident report).
+1. Run `scripts/compact.py`, then `scripts/survey.py`, then `scripts/metrics.py`. If
+   the survey flags a tool with "possible infra wait", or the prompt names one, pass it to
+   metrics.py as `--wait-tool`.
+2. Cross-check against any numbers the person already has (eval sheet, Confident report).
    `unit_metrics.csv` and the printed per-unit medians are the numbers to compare.
 3. **Gate:** totals match within a stated tolerance, or the difference is explained (for
    example duplicate LLM spans). Fix or drop units that metrics.py warns are missing
@@ -75,10 +83,14 @@ Read [references/analyst-brief.md](references/analyst-brief.md) and
 ## Phase 4: Aggregate and count
 
 1. Read every findings file. Merge similar patterns under one name.
-2. Copy `assets/profile_template.py` to `<dir>/profile.py` and edit it for this agent:
-   list the presentation tools, and override `tools_in_call` if a tool runs other tools
-   without logging them as spans. Then run `scripts/patterns.py`; it loads the profile.
-   Without a profile it treats every tool call as itself and skips presentation patterns.
+2. Write `<dir>/profile.py` yourself from `assets/profile_template.py`. Base it on
+   `survey.json`, the digests, and the findings:
+   - `PRESENTATION_TOOLS`: tools that only link, chart, or format. Survey hint: "possible
+     presentation tool". Confirm from the tool's input and output.
+   - `tools_in_call`: override it for tools flagged "may run tools unlogged". Read a few
+     sample inputs, then parse them (the template has a Python code example).
+   - Check it: re-run `scripts/patterns.py` and spot-check five events against the digest.
+   Then run `scripts/patterns.py`; it loads the profile.
 3. For each analyst pattern without a built-in count, write a small counting script in the
    audit folder and run it on every trace. Record events, traces affected, and model seconds.
    Start from `assets/counter_template.py` and edit `matches()`.

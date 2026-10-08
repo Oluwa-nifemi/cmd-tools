@@ -13,9 +13,10 @@
 | score | no | Eval score for the run |
 | label | no | Question text or short description |
 
-Build it with a short script from the user's sheet. Check the sheet first: look for a
-"side by side" or summary tab, missing runs, and which run is the baseline. Ask the user
-when run numbers do not line up across groups.
+Build it with a short script from the sheet. Check the sheet first: look for a
+"side by side" or summary tab, missing runs, and which run is the baseline. When run
+numbers do not line up across groups, compare the runs that exist and note it under
+Assumptions.
 
 ## Running fetch.py
 

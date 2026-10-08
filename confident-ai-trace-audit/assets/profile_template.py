@@ -1,4 +1,6 @@
-"""Agent profile for patterns.py. Copy to <audit_dir>/profile.py and edit for this agent.
+"""Agent profile for patterns.py. The auditing agent writes <audit_dir>/profile.py from
+this template, using survey.json and the digests. The person running the audit never
+edits it.
 
 patterns.py loads <audit_dir>/profile.py automatically. Both names are optional; the
 defaults below treat every tool call as itself.
