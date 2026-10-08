@@ -6,14 +6,8 @@ across every trace. You get research notes, and a deck if you ask for one.
 
 ## Setup
 
-1. Link the skill into Codex:
-
-   ```
-   ln -s <path-to>/cmd-tools/confident-ai-trace-audit ~/.codex/skills/confident-ai-trace-audit
-   ```
-
-2. Export at least one Confident AI key: `CONFIDENT_API_DEV_KEY` (dev traces) or
-   `CONFIDENT_API_KEY`.
+Export at least one Confident AI key: `CONFIDENT_API_DEV_KEY` (dev traces) or
+`CONFIDENT_API_KEY`.
 
 ## Use
 
