@@ -104,10 +104,10 @@ Before finalizing, scan for and fix:
 3. **Find the why.** Check the linked ticket, commit messages, or ask. If the reason cannot be recovered, ask the user rather than inventing motivation or padding with what-narration.
 4. **Verify the base and remote branch.** Confirm the base (usually `main`) and that the branch's upstream is not the base itself. Push explicitly: `git push -u origin HEAD:<branch>`.
 5. **Stage deliberately.** Only files belonging to this change. Leave unrelated dirty files and user-added debug logging alone; mention them instead of reverting.
-6. **Write the body to a temp file** — `mktemp -t pr-body` or `/tmp/pr-body-<branch>.md` — then pass `--body-file`. Use `/tmp` rather than the repo's `local/`.
+6. **Write the body to a temp file** — `mktemp -t pr-body` or `/tmp/pr-body-<branch>.md` — then pass `--body-file`. Use `/tmp` rather than the repo's `local/`. Create the file with `apply_patch` or a quoted heredoc (`<<'EOF'`). Never build it with `printf` or `echo` from a quoted string, because the shell runs backticks as commands and leaves `\n` as literal text.
 7. **Reread the body as rendered prose.** Confirm that it tells one connected story and that any bold sections separate distinct concerns. Remove generic or unnecessary labels before publishing. Then cut every sentence the reviewer would learn from the diff in under a minute.
 8. **Create it:** `gh pr create --draft --base <base> --title "<TICKET-123> <summary>" --body-file <path>`. Use `gh`, never a web/MCP route. Default to `--draft` unless the user says ready. In sandboxed environments request escalation up front.
-9. **Verify and report:** `gh pr view <n> --json number,isDraft,state,baseRefName,url`. Report the URL and draft state.
+9. **Verify and report:** `gh pr view <n> --json number,isDraft,state,baseRefName,url,body`. Report the URL and draft state. Read the returned `body` and check it matches the file you wrote: no literal `\n`, no missing text where inline code should be, and bullets on separate lines. If it is wrong, fix the file and run `gh pr edit <n> --body-file <path>`.
 
 ## After creating
 
