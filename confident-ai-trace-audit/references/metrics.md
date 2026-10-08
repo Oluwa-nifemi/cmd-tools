@@ -26,7 +26,7 @@ for per-question cross-checks.
 - **Same units.** Compare groups only on units present in both.
 - **Median of unit medians.** Each unit counts once. Report p90 next to it.
 - **Separate infra from agent time.** Queueing or cold starts hide inside one tool call (for
-  example a sandbox claim in the first `execute_code`). Use `--wait-tool` and say exactly
+  example a sandbox claim in the first call of a code tool). Use `--wait-tool` and say exactly
   what was removed. Show the ideal case (all waits removed) only when labelled as ideal.
 - **Peak context misleads when system prompts differ.** Report working tokens (input minus
   the fixed prefix) next to raw peak input. The prefix is usually cache-read.

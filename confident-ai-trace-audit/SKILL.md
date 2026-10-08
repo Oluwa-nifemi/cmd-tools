@@ -47,7 +47,7 @@ Read [references/fetching.md](references/fetching.md).
 Read [references/metrics.md](references/metrics.md).
 
 1. Run `scripts/compact.py`, then `scripts/metrics.py`. Pass `--wait-tool` when one
-   tool's first call holds an infra wait (for example `execute_code`).
+   tool's first call holds an infra wait (for example a sandbox or cold start).
 2. Cross-check against any numbers the user already has (eval sheet, Confident report).
    `unit_metrics.csv` and the printed per-unit medians are the numbers to compare.
 3. **Gate:** totals match within a stated tolerance, or the difference is explained (for
@@ -75,14 +75,13 @@ Read [references/analyst-brief.md](references/analyst-brief.md) and
 ## Phase 4: Aggregate and count
 
 1. Read every findings file. Merge similar patterns under one name.
-2. Run `scripts/patterns.py` for the built-in counts. Pass
-   `--presentation-tools` when the agent has link, chart, or format tools.
-   Code tools (a `code` argument, e.g. `execute_code`) are handled: the script reads
-   which tool functions each cell calls from the code, and counts `no_call_cells`.
+2. Copy `assets/profile_template.py` to `<dir>/profile.py` and edit it for this agent:
+   list the presentation tools, and override `tools_in_call` if a tool runs other tools
+   without logging them as spans. Then run `scripts/patterns.py`; it loads the profile.
+   Without a profile it treats every tool call as itself and skips presentation patterns.
 3. For each analyst pattern without a built-in count, write a small counting script in the
    audit folder and run it on every trace. Record events, traces affected, and model seconds.
-   To see which tools a code cell called, import `functions_called` from
-   `scripts/patterns.py` (add the scripts folder to `sys.path`).
+   Start from `assets/counter_template.py` and edit `matches()`.
 4. **Gate:** every pattern in the notes has a count from a script, or is marked
    "hypothesis, n traces seen".
 

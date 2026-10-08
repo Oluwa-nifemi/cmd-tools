@@ -36,19 +36,6 @@ def as_text(value: object) -> str:
     return json.dumps(value)
 
 
-def code_from_input(value: object) -> str | None:
-    # Code tools (e.g. execute_code) take {"code": "..."}. Keep the full code: when the
-    # trace has no nested tool spans, the code is the only record of which tools ran.
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    if isinstance(value, dict) and isinstance(value.get("code"), str):
-        return value["code"]
-    return None
-
-
 def to_number(value: str | None) -> float | None:
     if value is None or str(value).strip() == "":
         return None
@@ -96,7 +83,7 @@ def drop_duplicate_llm_spans(spans: list) -> list:
 
 
 def nearest_tool_ancestor(span: dict, by_uuid: dict) -> dict | None:
-    # Tools called from inside another tool (e.g. data tools inside execute_code) are
+    # Tools called from inside another tool (e.g. a code or router tool) are
     # nested TOOL spans. They cost no model turn of their own.
     parent = by_uuid.get(span.get("parentUuid"))
     while parent is not None:
@@ -143,7 +130,6 @@ def compact_trace(raw: dict, row: dict) -> dict:
             item["is_top_tool"] = ancestor is None
             item["top_tool_uuid"] = None if ancestor is None else ancestor["uuid"]
             item["input"] = as_text(span.get("input"))[:TOOL_INPUT_LIMIT]
-            item["code"] = code_from_input(span.get("input"))
             item["output_chars"] = len(output)
             item["output_head"] = output[:TOOL_HEAD_LIMIT]
         items.append(item)

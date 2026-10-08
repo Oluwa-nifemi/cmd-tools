@@ -4,10 +4,14 @@
 Analysts find patterns in a few units; this script counts them in all traces. A pattern
 without a count from here (or from a custom script) is still a hypothesis.
 
-Usage: patterns.py --audit <audit_dir> [--presentation-tools get_asset_link,build_chart]
-                   [--big-output-chars 8000]
-Reads:  <audit_dir>/compact/*.json
+Usage: patterns.py --audit <audit_dir> [--profile <audit_dir>/profile.py] [--big-output-chars 8000]
+Reads:  <audit_dir>/compact/*.json, the profile (optional, see assets/profile_template.py)
 Writes: <audit_dir>/patterns.json, <audit_dir>/pattern_events.csv
+
+The profile describes the agent: which tools only format or link, and which tools a
+tool call ran (override tools_in_call for tools that run other tools, such as a code
+tool). Without a profile, every tool call counts as itself and presentation patterns
+are skipped.
 
 Built-in patterns, all per group:
 - errored_tool_calls: tool spans with a non-success status, grouped by tool + error head.
@@ -16,57 +20,56 @@ Built-in patterns, all per group:
 - big_tool_outputs: tool outputs above --big-output-chars (context bloat).
 - single_tool_turns_in_a_row: consecutive turns that each call exactly one top-level tool.
   These are candidates for batching; the analysts decide whether they were dependent.
-- presentation_only_turns: turns whose tools (top-level and nested) are all in
-  --presentation-tools. Skipped when the list is empty.
+- presentation_only_turns: turns whose tools are all in PRESENTATION_TOOLS.
 - tail_turns: non-final turns after the last turn that called a non-presentation tool.
 - no_tool_turns: non-final model calls that call no tool at all.
-- no_call_cells: code-tool calls whose code calls no tool function (e.g. only print("done")).
+- empty_tool_calls: top-level tool calls for which tools_in_call returns nothing (for
+  example a code cell that only prints). Never fires with the default profile.
 - slow_model_calls: model calls above the group's p90 duration.
-
-Code tools: when a tool span has code (e.g. execute_code) and no nested tool spans, the
-tools it ran are read from the code: every bare function call that is not a Python
-builtin and not defined in the code. Method calls (x.y()) are ignored.
 """
 import argparse
-import ast
-import builtins
 import csv
 import glob
+import importlib.util
 import json
 import os
-import re
 import statistics
 from collections import Counter, defaultdict
 
-PYTHON_NAMES = set(dir(builtins))
-# Fallback for code that does not parse (e.g. truncated input). Can match comments.
-CALL_PATTERN = re.compile(r"(?<![\w.])([A-Za-z_]\w*)\s*\(")
+
+class DefaultProfile:
+    PRESENTATION_TOOLS: set = set()
+
+    @staticmethod
+    def tools_in_call(span: dict) -> set:
+        return {span["name"]}
 
 
-def functions_called(code: str) -> set:
-    # Parse instead of regex so tool names inside comments or strings do not count.
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return {name for name in CALL_PATTERN.findall(code) if name not in PYTHON_NAMES}
-    defined = set()
-    called = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            defined.add(node.name)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            called.add(node.func.id)
-    return called - defined - PYTHON_NAMES
+def load_profile(path: str | None) -> object:
+    if not path or not os.path.exists(path):
+        return DefaultProfile
+    spec = importlib.util.spec_from_file_location("audit_profile", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "PRESENTATION_TOOLS"):
+        module.PRESENTATION_TOOLS = set()
+    if not hasattr(module, "tools_in_call"):
+        module.tools_in_call = DefaultProfile.tools_in_call
+    return module
 
 
-def turn_tool_names(spans: list) -> set:
+def turn_tool_names(spans: list, profile: object) -> set:
+    # Nested tool spans already name what ran inside their parent, so use them when
+    # present and ask the profile only about top-level calls without nested spans.
     nested_parents = {s["top_tool_uuid"] for s in spans if not s["is_top_tool"]}
     names = set()
     for span in spans:
-        if span.get("code") is not None and span["uuid"] not in nested_parents:
-            names |= functions_called(span["code"])
-        elif span.get("code") is None:
+        if not span["is_top_tool"]:
             names.add(span["name"])
+        elif span["uuid"] in nested_parents:
+            names.add(span["name"])
+        else:
+            names |= profile.tools_in_call(span)
     return names
 
 
@@ -80,10 +83,13 @@ def percentile(values: list, fraction: float) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--audit", required=True)
-    parser.add_argument("--presentation-tools", default="", help="comma list of tools that only format or link")
+    parser.add_argument("--profile", help="agent profile; default <audit>/profile.py when it exists")
     parser.add_argument("--big-output-chars", type=int, default=8000)
     args = parser.parse_args()
-    presentation = {name.strip() for name in args.presentation_tools.split(",") if name.strip()}
+    profile_path = args.profile or os.path.join(args.audit, "profile.py")
+    profile = load_profile(profile_path)
+    presentation = set(profile.PRESENTATION_TOOLS)
+    print(f"profile: {profile_path if profile is not DefaultProfile else 'default (none found)'}")
 
     traces = []
     for path in sorted(glob.glob(os.path.join(args.audit, "compact", "*.json"))):
@@ -145,13 +151,13 @@ def main() -> None:
         last_working_turn = -1
         for turn in sorted(llm):
             top = [s for s in tools_by_turn.get(turn, []) if s["is_top_tool"]]
-            names = turn_tool_names(tools_by_turn.get(turn, []))
+            names = turn_tool_names(tools_by_turn.get(turn, []), profile)
             nested_parents = {s["top_tool_uuid"] for s in tools_by_turn.get(turn, []) if not s["is_top_tool"]}
             for span in top:
-                if span.get("code") is None or span["uuid"] in nested_parents:
+                if span["uuid"] in nested_parents:
                     continue
-                if not functions_called(span["code"]):
-                    add(trace, "no_call_cells", turn, turn_seconds(turn), span["code"].strip().replace("\n", " / ")[-120:])
+                if not profile.tools_in_call(span):
+                    add(trace, "empty_tool_calls", turn, turn_seconds(turn), span["name"] + ": " + span["input"].replace("\n", " ")[-120:])
             single = len(top) == 1
             if single and previous_single:
                 add(trace, "single_tool_turns_in_a_row", turn, turn_seconds(turn), top[0]["name"])
@@ -166,7 +172,7 @@ def main() -> None:
                 add(trace, "slow_model_calls", turn, llm[turn]["duration_s"], f"out {llm[turn]['output_tokens']} tok")
         for turn in sorted(llm):
             if last_working_turn < turn < last_turn:
-                add(trace, "tail_turns", turn, turn_seconds(turn), ",".join(sorted(turn_tool_names(tools_by_turn.get(turn, [])))) or "(no tool call)")
+                add(trace, "tail_turns", turn, turn_seconds(turn), ",".join(sorted(turn_tool_names(tools_by_turn.get(turn, []), profile))) or "(no tool call)")
 
     traces_per_group = Counter(trace["group"] for trace in traces)
     summary = defaultdict(dict)

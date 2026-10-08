@@ -99,7 +99,7 @@ def trace_metrics(trace: dict, wait_tool: str | None, wait_baseline_s: float) ->
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--audit", required=True)
-    parser.add_argument("--wait-tool", help="tool whose first call includes an infrastructure wait, e.g. execute_code")
+    parser.add_argument("--wait-tool", help="tool whose first call includes an infrastructure wait (queue, cold start)")
     parser.add_argument("--wait-baseline-s", type=float, default=0.4, help="normal duration of that call without the wait")
     args = parser.parse_args()
 

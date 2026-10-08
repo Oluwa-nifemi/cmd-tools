@@ -11,7 +11,7 @@ Start from these. Each one has a counting rule so a script can check it on every
 | Repeated calls | Same tool, same input, twice | Identical (name, input) pairs in one trace | `repeated_identical_calls` |
 | Oversized output | Big dumps entering context | Tool output above a size cutoff | `big_tool_outputs` |
 | Scratchpad turns | A turn that calls nothing and is not the answer | Non-final turn with no tool | `no_tool_turns` |
-| Empty code cells | A code cell that calls no tool (e.g. only `print("done")`) | Code tool call whose parsed code calls no tool function | `no_call_cells` |
+| Empty tool calls | A call that runs nothing useful (e.g. a code cell that only prints) | `tools_in_call` in the profile returns an empty set | `empty_tool_calls` (needs a profile) |
 | Slow calls | Model calls far above normal | Above the group p90 | `slow_model_calls` |
 | Hard-coded ids | Ids copied from earlier output into later calls | Five or more 24-hex ids written into one call's arguments | custom |
 | Ignored guidance | The prompt forbids X; the model does X | Count turns matching X | custom |
@@ -21,16 +21,15 @@ Start from these. Each one has a counting rule so a script can check it on every
 
 ## Writing a custom counter
 
-Built-in counters read code tools for you: compact.py keeps each code tool's full
-`code`, and patterns.py parses it with `ast` to find the tool functions a cell calls
-(comments and strings do not count). Reuse `functions_called(code)` from
-`scripts/patterns.py` in custom counters instead of matching names with regex.
+Copy `assets/counter_template.py` into the audit folder and edit `matches()`. Keep
+counters in the audit folder, not the skill. The template reads `compact/*.json`,
+charges model seconds to the turn that wrote the call, and prints events, traces, units,
+and model seconds per group.
 
-Put it in the audit folder, not the skill. Read `compact/*.json`. Each trace has `spans`
-with `type` (LLM or TOOL), `turn`, `name`, `duration_s`, `input`, `output_head`,
-`output_chars`, `status`, `is_top_tool`, and `code` (code tools only, else null).
-Charge model seconds to the turn that wrote the call. Print events, traces affected,
-units affected, and model seconds.
+Built-in counters only see tools that appear as spans. If a tool runs other tools
+without spans (for example a code tool, or a router tool), override `tools_in_call` in
+the audit's `profile.py`. The template has a commented example for a Python code tool.
+Custom counters can import the same profile so both agree on what a call ran.
 
 ## When a pattern is a feature
 
