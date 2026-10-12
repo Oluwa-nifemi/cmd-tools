@@ -110,6 +110,24 @@
     .stat-card .stat-value { font-family: var(--font-display); font-size: clamp(1.3rem, 2.6vw, 2rem); color: var(--ink); }
     .stat-card .stat-label { font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-top: 0.35rem; }
 
+    /* ── Layout primitives: see references/deck-snippets.md. Prefer these to inline styles. ── */
+    .lede { max-width: 82ch; }
+    .cols { display: flex; gap: 1.5rem; width: 100%; align-items: flex-start; margin: 1rem 0; }
+    .cols > * { flex: 1 1 0; min-width: 0; margin-top: 0; }
+    .cols .code-block { margin-top: 0; }
+    .cards { display: flex; gap: 1rem; width: 100%; margin: 1rem 0; }
+    .card { flex: 1 1 0; min-width: 0; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 0.85rem 1rem; }
+    .card-label { font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.4rem; }
+    .card-body { font-size: 0.95rem; line-height: 1.45; }
+    .flow { display: flex; gap: 0.4rem; width: 100%; margin: 1rem 0; }
+    .flow-step { flex: 1 1 0; min-width: 0; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: 0.65rem 0.75rem; font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
+    .flow-step .card-label { white-space: nowrap; }
+    .flow-arrow { flex: 0 0 auto; align-self: center; color: var(--ink-faint); font-size: 1.1rem; }
+    .flow-arrow::before { content: "\2192"; }
+    .compare { display: flex; gap: 1.2rem; width: 100%; margin: 1rem 0; }
+    .compare > * { flex: 1 1 0; min-width: 0; }
+    .compare .code-block { margin-top: 0.5rem; }
+
     /* Note / caveat boxes */
     .note-box { border-left: 3px solid var(--rule); background: var(--paper-2); padding: 0.9rem 1.2rem; margin: 1rem 0; max-width: 74ch; border-radius: 0 4px 4px 0; }
     .note-box.warn { border-left-color: var(--warn); background: var(--warn-soft); }
@@ -213,10 +231,21 @@
   <section class="slide" data-title="Example">
     <div class="slide-label">Section label</div>
     <h2 class="slide-title">Example slide — delete me</h2>
-    <ul>
-      <li>Tight, information-carrying bullet.</li>
-      <li>Another with an inline source (<a href="#">ref</a>).</li>
-    </ul>
+    <p class="lede">Lead with the point. Layout classes: .cols, .cards, .flow, .compare. Examples in references/deck-snippets.md.</p>
+    <div class="cols">
+      <ul>
+        <li>Tight, information-carrying bullet.</li>
+        <li>Another with an inline source (<a href="#">ref</a>).</li>
+      </ul>
+      <div class="cards">
+        <div class="card"><div class="card-label">Label</div><div class="card-body">One complete idea.</div></div>
+      </div>
+    </div>
+    <div class="flow">
+      <div class="flow-step"><div class="card-label">1 &middot; Actor</div>Action</div>
+      <div class="flow-arrow"></div>
+      <div class="flow-step"><div class="card-label">2 &middot; Actor</div>Action</div>
+    </div>
 
     <!-- Optional stat row -->
     <div class="stat-row">
