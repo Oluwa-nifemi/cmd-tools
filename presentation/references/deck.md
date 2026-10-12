@@ -5,6 +5,11 @@ region between the template markers.
 
 - Use `<section class="slide" data-title="Short label">`.
 - Make the first slide a cover with `class="cover"`.
+- Build slides from the template's layout classes: `.lede`, `.cols`,
+  `.cards`, `.flow`, `.compare`. Copy patterns from
+  [deck-snippets.md](deck-snippets.md). Avoid inline `style=` attributes; they
+  cost context to write and drift from the deck's look.
+- Do not read old decks to copy their look. The template classes are the look.
 - Keep slide titles short and the deck lean.
 - Keep all load-bearing content visible. Do not use `<details>`, details panels,
   or generic “more” affordances in deck mode.

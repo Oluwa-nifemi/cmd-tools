@@ -60,9 +60,11 @@ each chapter, and no `<details>` except `details.deeper`. Verify also:
 The automated checks do not judge whether the writing fits the reader. Run the
 self-check in [interactive.md](interactive.md) for that.
 
-Inspect the contact sheet. Then inspect every flagged slide, novel layout, SVG,
-and open modal screenshot. The automated checks do not judge whether the story,
-diagram, or evidence is useful.
+Inspect the contact sheet first. Then open individual screenshots only for
+flagged slides, slides with a novel layout, SVGs, wide code blocks, and open
+modals. Check one viewport unless a slide is flagged at the other. Screenshots
+are expensive context; do not open every slide at both sizes. The automated
+checks do not judge whether the story, diagram, or evidence is useful.
 
 Before reporting completion, confirm:
 

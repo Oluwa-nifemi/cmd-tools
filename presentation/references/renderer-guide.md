@@ -25,10 +25,13 @@ Read these files in this order:
 2. [deck.md](deck.md) for `format: deck`, [page.md](page.md) for
    `format: page`, or [interactive.md](interactive.md) for
    `format: interactive`.
+   For decks, also [deck-snippets.md](deck-snippets.md).
 3. [verification.md](verification.md) after rendering.
 
 For feedback revisions, do not run the initializer. Read the exact target HTML
 immediately before editing and make only the requested changes.
+Do not read the template's CSS or script to learn the layout classes; the
+snippets file lists them.
 
 Edit only the template's designated content region. Do not rewrite its CSS,
 JavaScript, navigation, commenting, or print chrome.

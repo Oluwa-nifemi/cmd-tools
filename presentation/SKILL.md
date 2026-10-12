@@ -75,7 +75,7 @@ A calling skill may invoke this skill after assembling source material. The call
 
 ## Resource loading
 
-- Artifact owner: `references/renderer-guide.md`, `references/content-quality.md`, the selected format reference, and `references/verification.md`; optionally `briefs/common.md` and the format brief.
+- Artifact owner: `references/renderer-guide.md`, `references/content-quality.md`, the selected format reference, and `references/verification.md`; for decks also `references/deck-snippets.md`; optionally `briefs/common.md` and the format brief.
 - Delegated renderer: the same renderer resources plus the brief and source material.
 - Independent reviewer (optional): rendered screenshots, audience/goal, and quality criteria; no artifact edits.
 - `scripts/presentation_artifact.py` selects and copies the template; no need to read template source just to initialize.
