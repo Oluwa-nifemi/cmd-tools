@@ -72,6 +72,7 @@ Before reporting completion, confirm:
 - The conclusion and recommendation are consistent with the evidence and with
   each other.
 - No placeholder text remains.
+- Titles and prose pass "Plain writing" in content-quality.md.
 - Every prominent metric includes measurement, baseline, change, and meaning.
 - Load-bearing content is visible without interaction.
 - Links, labels, and terminology are readable.
