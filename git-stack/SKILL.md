@@ -30,6 +30,13 @@ Linked worktrees share this metadata. Legacy worktree-local copies migrate
 automatically only when every copy agrees. Conflicting copies stop with an
 error so no stack is selected silently.
 
+A recorded base is checked before every rebase. A base that is no longer an
+ancestor of its branch is stale, which raw `git rebase --onto` or `git commit
+--amend` can cause. gs refreshes a stale base from the parent reflog
+(`merge-base --fork-point`) or merge-base before rebasing. When healing is
+ambiguous, gs stops and prints the recorded base and the candidates. `gs ls`
+and `gs log` mark affected branches with `[stale base]`.
+
 ## Typical workflow
 
 ```bash

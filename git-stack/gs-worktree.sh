@@ -60,12 +60,85 @@ collect_reparent_plan() {
   done <<< "$(get_children "$old_parent")"
 }
 
+# A recorded base that names an OID git cannot resolve is unusable. Without
+# this check, merge-base becomes a silent fallback for any corrupted or
+# pruned base file, which turns metadata damage into a wrong rebase.
+recorded_base_is_usable() {
+  local recorded="$1"
+  [[ -n "$recorded" ]] || return 1
+  git rev-parse --verify --quiet "$recorded^{commit}" >/dev/null 2>&1
+}
+
+# Resolve the rebase boundary for a child whose recorded base may be stale.
+#
+# gs must treat the recorded base as durable: after a parent is amended or
+# rebased, merge-base(parent, child) lands inside the parent and would replay
+# the whole parent onto the child. The recorded base is only stale when the
+# child itself was rewritten outside gs, which makes the recorded OID a
+# non-ancestor of the new child tip.
+#
+# Healing a stale base relies on local history first. --fork-point searches the
+# parent reflog, so it still finds the pre-rewrite fork after the parent moved.
+# It fails in fresh clones or after reflogs expire, so merge-base is the
+# fallback. When both disagree, or neither returns a commit, gs refuses to
+# guess: rebasing from the wrong boundary duplicates commits or drops them.
+resolve_restack_fork() {
+  local branch="$1" parent="$2" recorded="$3" fork_point merge_base
+  if ! recorded_base_is_usable "$recorded"; then
+    printf "recorded base for '%s' is stale ('%s') and cannot be resolved in this repository\n" \
+      "$branch" "$recorded" >&2
+    return 1
+  fi
+  if git merge-base --is-ancestor "$recorded" "$branch" 2>/dev/null; then
+    printf '%s\n' "$recorded"
+    return 0
+  fi
+  fork_point="$(git merge-base --fork-point "$parent" "$branch" 2>/dev/null || true)"
+  merge_base="$(git merge-base "$branch" "$parent" 2>/dev/null || true)"
+  if [[ -z "$fork_point" && -z "$merge_base" ]]; then
+    printf "recorded base for '%s' is stale ('%s') and git cannot find the fork from '%s'\n" \
+      "$branch" "$recorded" "$parent" >&2
+    return 1
+  fi
+  if [[ -n "$fork_point" && -n "$merge_base" && "$fork_point" != "$merge_base" ]]; then
+    printf "recorded base for '%s' is stale ('%s'); fork-point '%s' and merge-base '%s' disagree. Re-track the branch after verifying its parent.\n" \
+      "$branch" "$recorded" "$fork_point" "$merge_base" >&2
+    return 1
+  fi
+  if [[ -n "$fork_point" ]]; then
+    printf '%s\n' "$fork_point"
+  else
+    printf '%s\n' "$merge_base"
+  fi
+}
+
+# Non-mutating check used by ls/log markers and preflights. Stale means the
+# branch was rewritten outside gs; the restack resolver can usually heal it.
+recorded_base_is_stale() {
+  local branch="$1" recorded
+  recorded="$(get_base_oid "$branch" 2>/dev/null || true)"
+  [[ -n "$recorded" ]] || return 1
+  ! git merge-base --is-ancestor "$recorded" "$branch" 2>/dev/null
+}
+
+# Return a healed rebase boundary without touching metadata. Restack journals
+# restore the original base on abort, so writes stay in the journal builder.
+resolve_healed_fork() {
+  local branch="$1" parent="$2"
+  if ! recorded_base_is_stale "$branch"; then
+    get_base_oid "$branch" 2>/dev/null || true
+    return 0
+  fi
+  resolve_restack_fork "$branch" "$parent" "$(get_base_oid "$branch" 2>/dev/null || true)"
+}
+
 validate_restack_bases() {
   local root="$1" child parent base
   while IFS=$'\t' read -r child parent; do
     [[ -n "$child" ]] || continue
-    base="$(get_base_oid "$child" 2>/dev/null || true)"
-    if [[ -z "$base" ]] && ! git merge-base --is-ancestor "$parent" "$child" 2>/dev/null; then
+    base="$(resolve_healed_fork "$child" "$parent")" ||
+      die "recorded base for '$child' is stale; verify its fork from '$parent' and re-track it"
+    if [[ -z "$(get_base_oid "$child" 2>/dev/null || true)" ]] && [[ -z "$base" ]] && ! git merge-base --is-ancestor "$parent" "$child" 2>/dev/null; then
       printf "${RED}error:${RESET} no recorded base for '%s'; refusing to guess after '%s' changed history\n" "$child" "$parent" >&2
       return 1
     fi
@@ -306,7 +379,17 @@ prepare_restack_operation() {
     fi
     old_base="$(get_base_oid "$child" 2>/dev/null || true)"
     if [[ -n "$old_base" ]]; then old_base_present=yes; else old_base_present=no; fi
-    fork="$old_base"
+    if [[ -n "$old_base" ]] && ! git merge-base --is-ancestor "$old_base" "$child" 2>/dev/null; then
+      fork="$(resolve_restack_fork "$child" "$parent" "$old_base")" || {
+        rm -rf "$tmp"
+        die "recorded base for '$child' is stale; verify its fork from '$parent' and re-track it"
+      }
+      set_base_oid "$child" "$fork"
+      warn "recorded base for '$child' was stale; refreshed it to '$(git rev-parse --short "$fork" 2>/dev/null || printf '%s' "$fork")'"
+      old_base="$fork"
+    else
+      fork="$old_base"
+    fi
     if [[ -z "$fork" ]]; then
       if git merge-base --is-ancestor "$parent" "$child" 2>/dev/null; then
         fork="$parent_oid"
@@ -705,10 +788,15 @@ cmd_move() {
   cur="$(current_branch)"
   is_tracked "$cur" || die "'$cur' is not tracked by gs"
   old_parent="$(get_parent "$cur")"
-  fork="$(get_base_oid "$cur" 2>/dev/null || true)"
-  [[ -n "$fork" ]] || die "no recorded base for '$cur'; re-track it after verifying '$old_parent'"
   while IFS= read -r child; do [[ -n "$child" ]] && descendants+=("$child"); done <<< "$(collect_descendants_bfs "$cur")"
   preflight_owned_branches "$cur" "${descendants[@]}" || die "move preflight failed; no branches were changed"
+  fork="$(resolve_restack_fork "$cur" "$old_parent" "$(get_base_oid "$cur" 2>/dev/null || true)")" ||
+    die "could not resolve the recorded base for '$cur'; re-track it after verifying '$old_parent'"
+  [[ -n "$fork" ]] || die "no recorded base for '$cur'; re-track it after verifying '$old_parent'"
+  if [[ "$fork" != "$(get_base_oid "$cur" 2>/dev/null || true)" ]]; then
+    set_base_oid "$cur" "$fork"
+    warn "recorded base for '$cur' was stale; refreshed it to '$(git rev-parse --short "$fork" 2>/dev/null || printf '%s' "$fork")'"
+  fi
 
   info "rebasing '$cur' onto '$target'..."
   if ! git rebase --onto "$target" "$fork" "$cur" --quiet; then
@@ -875,7 +963,7 @@ cmd_create() {
 
 cmd_track() {
   ensure_gs_init
-  local onto="" trunk parent b fork i
+  local onto="" trunk parent b fork i recorded
   local branches=() parents=() forks=() old_oids=() completed=() affected=() descendants=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -897,8 +985,13 @@ cmd_track() {
     branch_exists "$b" || die "branch '$b' does not exist"
     parents+=("$parent")
     if is_tracked "$b"; then
-      fork="$(get_base_oid "$b" 2>/dev/null || true)"
-      [[ -n "$fork" ]] || die "no recorded base for '$b'; re-track it after verifying its current parent"
+      # A tracked branch keeps its durable base unless the branch itself was
+      # rewritten outside gs; that stale base is healed from real history.
+      recorded="$(get_base_oid "$b" 2>/dev/null || true)"
+      # Refuse before preflight when the durable base is missing; healing a
+      # stale base belongs after preflight, next to the other metadata writes.
+      [[ -n "$recorded" ]] || die "no recorded base for '$b'; re-track it after verifying its current parent"
+      fork="$recorded"
     else
       fork="$(git merge-base "$b" "$parent" 2>/dev/null || true)"
       [[ -n "$fork" ]] || die "could not determine where '$b' forks from '$parent'"
@@ -910,6 +1003,22 @@ cmd_track() {
     parent="$b"
   done
   preflight_owned_branches "${affected[@]}" || die "track preflight failed; no branches were changed"
+
+  # Heal stale bases only after every owner passed preflight. This keeps
+  # metadata unchanged when a later branch or worktree blocks the track.
+  for ((i = 0; i < ${#branches[@]}; i++)); do
+    b="${branches[$i]}"
+    parent="${parents[$i]}"
+    if is_tracked "$b"; then
+      fork="$(resolve_restack_fork "$b" "$parent" "${forks[$i]}")" ||
+        die "recorded base for '$b' is stale; verify its fork from '$parent' and re-track it"
+      if [[ "$fork" != "${forks[$i]}" ]]; then
+        set_base_oid "$b" "$fork"
+        warn "recorded base for '$b' was stale; refreshed it to '$(git rev-parse --short "$fork" 2>/dev/null || printf '%s' "$fork")'"
+        forks[$i]="$fork"
+      fi
+    fi
+  done
 
   for ((i = 0; i < ${#branches[@]}; i++)); do
     b="${branches[$i]}"
@@ -1001,16 +1110,23 @@ cmd_insert() {
   actual_parent="$(get_parent "$child" 2>/dev/null || true)"
   [[ "$actual_parent" == "$parent" ]] || die "'$child' is stacked on '$actual_parent', not '$parent' — use 'gs move --onto' if you want to reparent it"
 
-  fork="$(get_base_oid "$child" 2>/dev/null || true)"
-  if [[ -z "$fork" ]]; then
-    git merge-base --is-ancestor "$parent" "$child" 2>/dev/null ||
-      die "no recorded base for '$child'; re-track it after verifying '$parent'"
-    fork="$(git rev-parse "$parent")"
+  # Missing-base guard stays here, before any mutation: a base that is absent
+  # is not healable, and this command must not guess from a rewritten parent.
+  if [[ -z "$(get_base_oid "$child" 2>/dev/null || true)" ]] && ! git merge-base --is-ancestor "$parent" "$child" 2>/dev/null; then
+    die "no recorded base for '$child'; re-track it after verifying '$parent'"
   fi
   caller="$(current_branch)"
   affected+=("$caller" "$child")
   while IFS= read -r branch; do [[ -n "$branch" ]] && affected+=("$branch"); done <<< "$(collect_descendants_bfs "$child")"
   preflight_owned_branches "${affected[@]}" || die "insert preflight failed; no branches were changed"
+  # Healing must happen only after preflight: a dirty owning worktree must not
+  # leave a modified base file behind when the command stops.
+  fork="$(resolve_restack_fork "$child" "$parent" "$(get_base_oid "$child" 2>/dev/null || true)")" ||
+    die "could not resolve the recorded base for '$child'; re-track it after verifying '$parent'"
+  if [[ "$fork" != "$(get_base_oid "$child" 2>/dev/null || true)" ]]; then
+    set_base_oid "$child" "$fork"
+    warn "recorded base for '$child' was stale; refreshed it to '$(git rev-parse --short "$fork" 2>/dev/null || printf '%s' "$fork")'"
+  fi
 
   git branch "$name" "$parent" --quiet || die "could not create branch '$name'; gs metadata was not changed"
   if ! rebase_branch_in_executor "$child" "$name" "$fork"; then
@@ -1070,17 +1186,24 @@ cmd_fold() {
   while IFS= read -r child; do
     [[ -n "$child" ]] || continue
     children+=("$child")
-    fork="$(get_base_oid "$child" 2>/dev/null || true)"
-    if [[ -z "$fork" ]]; then
-      git merge-base --is-ancestor "$cur" "$child" 2>/dev/null ||
-        die "no recorded base for '$child'; re-track it after verifying '$cur'"
-      fork="$(git rev-parse "$cur")"
+    # Missing bases must stop before any mutation; stale bases are healed
+    # later, only after preflight passes for the whole stack.
+    if [[ -z "$(get_base_oid "$child" 2>/dev/null || true)" ]] && ! git merge-base --is-ancestor "$cur" "$child" 2>/dev/null; then
+      die "no recorded base for '$child'; re-track it after verifying '$cur'"
     fi
     affected+=("$child")
     while IFS= read -r branch; do [[ -n "$branch" ]] && affected+=("$branch"); done <<< "$(collect_descendants_bfs "$child")"
-    validate_restack_bases "$child" || die "fold preflight failed; no branches were changed"
   done <<< "$(get_children "$cur")"
   preflight_owned_branches "${affected[@]}" || die "fold preflight failed; no branches were changed"
+  for child in "${children[@]}"; do
+    fork="$(resolve_restack_fork "$child" "$cur" "$(get_base_oid "$child" 2>/dev/null || true)")" ||
+      die "could not resolve the recorded base for '$child'; re-track it after verifying '$cur'"
+    [[ -n "$fork" ]] || die "no recorded base for '$child'; re-track it after verifying '$cur'"
+    if [[ "$fork" != "$(get_base_oid "$child" 2>/dev/null || true)" ]]; then
+      set_base_oid "$child" "$fork"
+      warn "recorded base for '$child' was stale; refreshed it to '$(git rev-parse --short "$fork" 2>/dev/null || printf '%s' "$fork")'"
+    fi
+  done
   parent_old_oid="$(git rev-parse "$parent")"
   reparent_plan="$(mktemp "${TMPDIR:-/tmp}/gs-fold-plan.XXXXXX")"
   collect_reparent_plan "$cur" "$parent" > "$reparent_plan"

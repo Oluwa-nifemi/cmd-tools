@@ -406,6 +406,11 @@ print_tree() {
     local dirty_file="$cache_dir/dirty_$(encode_branch "$child")"
     [[ -f "$dirty_file" ]] && dirty=" ${YELLOW}*${RESET}"
 
+    # Stale-base indicator. A non-ancestor recorded base means the branch was
+    # rewritten outside gs; restack will heal or reject it before rebasing.
+    local stale=""
+    recorded_base_is_stale "$child" && stale=" ${YELLOW}[stale base]${RESET}"
+
     local marker=""
     if [[ "$child" == "$cur" ]]; then
       marker=" ${GREEN}← you are here${RESET}"
@@ -416,7 +421,7 @@ print_tree() {
       color="${GREEN}${BOLD}"
     fi
 
-    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty} ${DIM}(${commits} commit$([ "$commits" != "1" ] && echo "s"))${RESET}${marker}"
+    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty}${stale} ${DIM}(${commits} commit$([ "$commits" != "1" ] && echo "s"))${RESET}${marker}"
     print_tree "$child" "$child_prefix" "$cur" "$cache_dir"
   done
 }
@@ -480,6 +485,11 @@ print_log_tree() {
     local dirty_file="$cache_dir/dirty_$(encode_branch "$child")"
     [[ -f "$dirty_file" ]] && dirty=" ${YELLOW}*${RESET}"
 
+    # Stale-base indicator. A non-ancestor recorded base means the branch was
+    # rewritten outside gs; restack will heal or reject it before rebasing.
+    local stale=""
+    recorded_base_is_stale "$child" && stale=" ${YELLOW}[stale base]${RESET}"
+
     local marker=""
     if [[ "$child" == "$cur" ]]; then
       marker=" ${GREEN}← you are here${RESET}"
@@ -490,7 +500,7 @@ print_log_tree() {
       color="${GREEN}${BOLD}"
     fi
 
-    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty}${marker}"
+    echo -e "${prefix}${connector}${color}${child}${RESET}${pr}${dirty}${stale}${marker}"
 
     # Show commits on this branch
     local parent_branch

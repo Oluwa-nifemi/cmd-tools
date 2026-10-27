@@ -358,6 +358,107 @@ test_missing_base_refuses_guess() {
   assert_no_file "$common/gs/operation"
 }
 
+# Build the failure mode from the field report: rewrite the parent with raw
+# git, rebase the child with raw git, and leave gs holding the old parent tip
+# as the child's recorded base. That OID is no longer an ancestor of child.
+make_stale_child_base() {
+  local old_parent_tip
+  old_parent_tip="$("$REAL_GIT" -C "$REPO" rev-parse parent)"
+  "$REAL_GIT" -C "$REPO" checkout -q parent
+  "$REAL_GIT" -C "$REPO" commit -q --amend -m parent-amended
+  "$REAL_GIT" -C "$REPO" checkout -q child
+  "$REAL_GIT" -C "$REPO" rebase --onto parent "$old_parent_tip" child >/dev/null
+  printf '%s\n' "$old_parent_tip" > "$(common_dir)/gs/bases/child"
+  printf '%s\n' "$old_parent_tip"
+}
+
+test_restack_heals_stale_base_after_raw_rebase() {
+  new_repo
+  make_linear_stack
+  local recorded_base output status
+  recorded_base="$(make_stale_child_base)"
+  "$REAL_GIT" -C "$REPO" checkout -q parent
+  printf 'parent-2\n' >> "$REPO/parent.txt"
+  "$REAL_GIT" -C "$REPO" add parent.txt
+  "$REAL_GIT" -C "$REPO" commit -qm parent-2
+
+  output="$(run_gs "$REPO" restack 2>&1)" && status=0 || status=$?
+
+  [[ $status -eq 0 ]] || fail "restack could not heal a stale base: $output"
+  assert_contains "$output" "recorded base for 'child' was stale"
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor parent child
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-list --count parent..child)" "1"
+  assert_eq "$(cat "$(common_dir)/gs/bases/child")" "$("$REAL_GIT" -C "$REPO" rev-parse parent)"
+}
+
+test_move_heals_stale_base_after_raw_amend() {
+  new_repo
+  make_linear_stack
+  make_stale_child_base >/dev/null
+  "$REAL_GIT" -C "$REPO" checkout -qb target main
+  printf 'target\n' > "$REPO/target.txt"
+  "$REAL_GIT" -C "$REPO" add target.txt
+  "$REAL_GIT" -C "$REPO" commit -qm target
+  "$REAL_GIT" -C "$REPO" checkout -q child
+
+  run_gs "$REPO" move --onto target >/dev/null
+
+  "$REAL_GIT" -C "$REPO" merge-base --is-ancestor target child
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-list --count target..child)" "1"
+  assert_file "$REPO/child.txt"
+}
+
+test_stale_base_with_missing_history_stops_cleanly() {
+  new_repo
+  make_linear_stack
+  local recorded_base old_child output status
+  # Point the recorded base at a commit that never existed. This is the
+  # unambiguous unhealable case: no reflog or merge-base candidate can
+  # validate it, and gs must refuse instead of inventing a fork.
+  recorded_base="deadbeedeadbeedeadbeedeadbeedeadbeedeadbee"
+  printf '%s\n' "$recorded_base" > "$(common_dir)/gs/bases/child"
+  # The parent must move so the rebase is necessary; otherwise restack
+  # completes without consulting the recorded base at all.
+  "$REAL_GIT" -C "$REPO" checkout -q parent
+  printf 'parent-2\n' >> "$REPO/parent.txt"
+  "$REAL_GIT" -C "$REPO" add parent.txt
+  "$REAL_GIT" -C "$REPO" commit -qm parent-2
+  old_child="$("$REAL_GIT" -C "$REPO" rev-parse child)"
+
+  output="$(run_gs "$REPO" restack 2>&1)" && status=0 || status=$?
+
+  [[ $status -ne 0 ]] || fail "restack guessed with an unhealable stale base"
+  assert_contains "$output" "stale"
+  assert_contains "$output" "$recorded_base"
+  assert_eq "$("$REAL_GIT" -C "$REPO" rev-parse child)" "$old_child"
+  assert_no_file "$(common_dir)/gs/operation"
+}
+
+test_ls_marks_stale_base() {
+  new_repo
+  make_linear_stack
+  make_stale_child_base >/dev/null
+
+  local output
+  output="$(run_gs "$REPO" ls)"
+
+  assert_contains "$output" "[stale base]"
+}
+
+test_insert_preflight_blocks_before_stale_base_heal() {
+  new_repo
+  make_linear_stack
+  local recorded_base output status
+  recorded_base="$(make_stale_child_base)"
+  printf 'dirty\n' > "$REPO/untracked.txt"
+
+  output="$(run_gs "$REPO" insert middle --between parent child 2>&1)" && status=0 || status=$?
+
+  [[ $status -ne 0 ]] || fail "insert healed a stale base before preflight passed"
+  assert_contains "$output" "insert preflight failed"
+  assert_eq "$(cat "$(common_dir)/gs/bases/child")" "$recorded_base"
+}
+
 test_conflict_continue_from_other_worktree() {
   new_repo
   run_gs "$REPO" init >/dev/null
@@ -1237,6 +1338,11 @@ for test_name in \
   test_navigation_reports_other_owner \
   test_unowned_branch_uses_temporary_executor \
   test_missing_base_refuses_guess \
+  test_restack_heals_stale_base_after_raw_rebase \
+  test_move_heals_stale_base_after_raw_amend \
+  test_stale_base_with_missing_history_stops_cleanly \
+  test_ls_marks_stale_base \
+  test_insert_preflight_blocks_before_stale_base_heal \
   test_conflict_continue_from_other_worktree \
   test_restack_abort_from_other_worktree \
   test_abort_restores_completed_steps \
