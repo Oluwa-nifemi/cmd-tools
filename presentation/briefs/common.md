@@ -30,7 +30,7 @@ the user explicitly asked for it. If omitted, ask; do not assume.>
 <tech talk | decision doc | scoped plan | status | explainer — one line>
 
 ## Output path
-<absolute path of the output HTML>
+<absolute path of the output HTML. Use a short kebab-case filename that names the topic, e.g. sprint-42-retro.html. Never use presentation.html.>
 
 ## Title
 <cover or header title>

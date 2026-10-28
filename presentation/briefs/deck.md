@@ -48,7 +48,7 @@ Sprint retro deck, no source files, content all inline:
 # Presentation brief
 
 ## Output path
-/Users/me/Desktop/sprint-42-retro/presentation.html
+/Users/me/Desktop/sprint-42-retro/sprint-42-retro.html
 
 ## Title
 Sprint 42 — Retrospective
@@ -112,7 +112,7 @@ For a research session output, the caller (research skill) composes a brief that
 # Presentation brief
 
 ## Output path
-/Users/me/work/myproj/local/litellm-context-management_research/presentation.html
+/Users/me/work/myproj/local/litellm-context-management_research/litellm-context-management.html
 
 ## Title
 LiteLLM context_management investigation
@@ -274,7 +274,7 @@ Modal content:
 ## Deck notes for caller authors
 
 - **Slide titles are yours.** Structure the deck however the content demands.
-- **Check for an existing deck before composing the brief.** If `presentation.html` already exists at the output path, the render is an update. Read the existing deck and note what it already contains, especially hand-added images, custom slides, or tuned content. Frame the brief as the desired end state of each slide; the renderer reconciles it against the existing deck.
+- **Check for an existing deck before composing the brief.** If a deck file already exists at the output path, the render is an update. Read the existing deck and note what it already contains, especially hand-added images, custom slides, or tuned content. Frame the brief as the desired end state of each slide; the renderer reconciles it against the existing deck.
 
 ## Updating an existing deck (optional section)
 
