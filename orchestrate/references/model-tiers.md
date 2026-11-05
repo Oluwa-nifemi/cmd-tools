@@ -12,6 +12,18 @@ Pass an explicit `model` and `reasoning_effort` on every dispatch. If you omit t
 
 If a task has one high-risk judgment inside routine work, split it into its own unit. Do not raise the tier for the whole task.
 
+## Respecting the model choice
+
+If the user names a model or tier, use it. Do not move a unit to another tier on your own; split the unit until the chosen model can finish each piece. Raise effort before changing model.
+
+## Lower-cost workhorse models
+
+Lower-cost models (for example DeepSeek at low effort, or Haiku) are reliable implementers when the brief is complete and the unit is sized for them (see Unit sizing in [build.md](build.md)). They do well on implementing a specified unit, mapping and tracing code, building fixtures and prepared environments, mechanical edits, and first-pass review against a checklist.
+
+They struggle when the brief leaves them to discover an interface, wait on another unit, or hold several concerns at once. They then read in loops, announce a patch while still reading, and ignore bounds restated in prose. Fix those with brief shape and sizing, not with reminders.
+
+For work that spans layers, an optional spec step can write the unit briefs first, contracts first. It can run on the same model at higher effort. Use another model only if the user chooses it.
+
 Effort is chosen by the unit, not by the model tier:
 
 | Effort | Use for |

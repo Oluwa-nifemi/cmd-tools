@@ -11,6 +11,8 @@ Do not interrupt a healthy agent merely to obtain a status update. For builds, c
 
 For each code review pass, use one independent reviewer to assess correctness, security, quality, naming, and unnecessary complexity together. Do not dispatch separate reviewers for these concerns. Add a specialist reviewer only when a concrete high-risk concern requires separate expertise.
 
+A healthy agent has produced a patch or a milestone report within the bound declared in its brief. A unit that misses its first-change bound is stalled; handle it with the stall protocol in [references/shared-protocol.md](references/shared-protocol.md).
+
 ## Hands-off rule
 
 The coordinator is an opaque router by default. Read report metadata, not report bodies. Pass detailed artifacts between agents by path, and inspect their contents only when the user explicitly asks.
@@ -19,12 +21,14 @@ The coordinator MUST NOT do implementation, debugging, investigation, fixing, or
 
 - Reading specs and plans to decompose work
 - Creating the orchestration log and conventions file
+- Preparing a unit's environment (a clean copy or worktree, installed dependencies, fixtures, saved test data, recorded baselines) so the unit is ready to dispatch
+- Small mechanical edits that need no design decision and are proven by one command; anything larger is a unit
 - Dispatching, waiting on, and closing sub-agents
 - Committing reviewed work (staging + `git commit`, when authorized)
 - Creating and switching branches (lightweight git plumbing)
 - Verifying a doer's verdict with one read-only command when a report is implausible
 
-If a sub-agent reports a failure, dispatch a fix agent or send the failure back to the original doer. Do not "quickly fix it yourself", even for a one-line fix or a quick check. Why: the coordinator's context window is the scarcest resource in the run, and every log, file read, or test run in it displaces coordination. The habit also leads to scope creep.
+If a sub-agent reports a failure, dispatch a fix agent or send the failure back to the original doer. Do not "quickly fix it yourself" when the fix needs diagnosis or judgment; the mechanical-edit exception above covers only changes with no design decision that one command proves. Why: the coordinator's context window is the scarcest resource in the run, and every log, file read, or test run in it displaces coordination. The habit also leads to scope creep.
 
 If a task requires a tool only the coordinator has access to (e.g. Browser, a specific MCP connector), dispatch a sub-agent for all preparatory and follow-up work and limit the coordinator's direct use of that tool to the irreducible minimum.
 
@@ -49,6 +53,7 @@ When a required source, integration, permission, or user-owned input is unavaila
    - Mixed work: read every applicable reference and sequence the modes around their dependencies.
 4. Read [references/shared-protocol.md](references/shared-protocol.md) before dispatching agents. Identify whether the active multi-agent surface is v1 or v2 and follow its dispatch contract.
 5. Pick each agent's model and effort from [references/model-tiers.md](references/model-tiers.md). Give code reviewers only [references/reviewer-brief.md](references/reviewer-brief.md); the coordinator does not read it.
+6. Before each dispatch, run the readiness check and write the brief from [references/brief-template.md](references/brief-template.md). Respect any model or tier the user named: split a unit rather than moving it to another tier.
 
 ## Mode choice
 
