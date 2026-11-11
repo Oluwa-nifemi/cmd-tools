@@ -9,7 +9,8 @@
 #   WT_WORKTREES_DIR  base directory for all worktrees (run `wt install <path>`
 #                     once and it'll write the export into ~/.zshrc for you)
 #   WT_LINK_IGNORED   space-separated globs, relative to the main worktree,
-#                     that get hard-linked into each new worktree
+#                     that get hard-linked into each new worktree (symlinked
+#                     when the hard link is refused)
 #                     (default: "CLAUDE.md CLAUDE.local.md .claude .env*")
 #   WT_POST_CREATE_HOOK optional executable called after setup with the new
 #                     worktree path as its first argument
@@ -714,7 +715,16 @@ _wt_run_post_create_hook() {
 #
 # Files are hard-linked so they behave like real files to tools that don't
 # follow symlinks; directories are symlinked because macOS can't hard-link a
-# directory. Globs are matched against the main worktree.
+# directory.
+#
+# A hard link is refused (EPERM) when the caller cannot write through the source
+# directory — a sandboxed shell (Codex workspace-write, an agent seatbelt) or a
+# TCC-restricted terminal. `ln -s` only writes inside the worktree and still
+# succeeds, so each file falls back to a symlink: same sharing, no source-side
+# write needed. Without that fallback the `ln -f` simply failed and the worktree
+# came up missing .env / CLAUDE.local.md with nothing on screen. Real failures
+# are counted and reported; the return value is 1 if any path could not be
+# linked at all, and unrelated to whether the fallback was used.
 #
 # This is `find`-based rather than a zsh `**/` glob, and that is the whole
 # point. The glob version hung for ~13 SECONDS PER PATTERN on a large repo
@@ -748,11 +758,23 @@ _wt_link_ignored() {
     prune_expr+=(-name "$prune_name")
   done
 
+  local -i failures=0 fallbacks=0
   local pattern match rel
+  local -a match_expr
   for pattern in ${=WT_LINK_IGNORED}; do
-    # -print0/read -d '' so paths with spaces survive. The pattern is matched
-    # against the basename, mirroring the old glob's `**/<pattern>` semantics:
-    # a nested `apps/foo/.env` is linked at the same relative path.
+    # A pattern with a slash is a path relative to the main worktree
+    # (`dev/agents.json`, `.codex/config.toml`). `-name` matches a basename
+    # only, so those patterns used to match NOTHING while still looking like
+    # supported configuration — `dev/agents.json` and `dev/brains` from a
+    # ~/.zshrc WT_LINK_IGNORED never reached a single worktree.
+    if [[ "$pattern" == */* ]]; then
+      match_expr=(-path "$root/$pattern")
+    else
+      # -print0/read -d '' so paths with spaces survive. Basename matching,
+      # mirroring the old glob's `**/<pattern>` semantics: a nested
+      # `apps/foo/.env` is linked at the same relative path.
+      match_expr=(-name "$pattern")
+    fi
     while IFS= read -r -d '' match; do
       rel="${match#$root/}"
       [[ "$rel" == "$match" ]] && continue
@@ -761,12 +783,42 @@ _wt_link_ignored() {
       # `.claude/.claude`. -P keeps find from following links in $root, but the
       # destination side needs its own guard for repeat runs.
       [[ -L "$dest/${rel%%/*}" ]] && continue
-      mkdir -p "$dest/${rel:h}"
-      if [[ -d "$match" ]]; then
-        ln -sfn "$match" "$dest/$rel"
-      else
-        ln -f "$match" "$dest/$rel"
+      # Never touch a path git checks out. Hard-linking or symlinking over a
+      # tracked path makes git report every file under it as deleted in this
+      # worktree's diff; wt-link-ignored has always guarded this and `wt create`
+      # did not, so a tracked `.claude/` or `CLAUDE.md` (both common) came out
+      # as a symlink on a dirty worktree.
+      if [[ -n "$(git -C "$root" ls-files -- "$rel" 2>/dev/null | head -n1)" ]]; then
+        continue
       fi
-    done < <(find -P "$root" \( "${prune_expr[@]}" \) -prune -o -name "$pattern" -print0 2>/dev/null)
+      if ! mkdir -p "$dest/${rel:h}"; then
+        echo "wt: warning: could not create parent directory for: $rel" >&2
+        failures+=1
+        continue
+      fi
+      if [[ -d "$match" ]]; then
+        ln -sfn "$match" "$dest/$rel" || {
+          echo "wt: warning: could not symlink: $rel" >&2
+          failures+=1
+        }
+      elif ln -f "$match" "$dest/$rel" 2>/dev/null; then
+        : # hard link: same inode, so the worktree sees a real file
+      elif ln -sfn "$match" "$dest/$rel"; then
+        fallbacks+=1
+        echo "wt: linked as symlink (hard link refused): $rel" >&2
+      else
+        echo "wt: warning: could not link: $rel" >&2
+        failures+=1
+      fi
+    done < <(find -P "$root" \( "${prune_expr[@]}" \) -prune -o "${match_expr[@]}" -print0 2>/dev/null)
   done
+
+  if (( fallbacks > 0 )); then
+    echo "wt: ${fallbacks} path(s) symlinked instead of hard-linked (caller cannot link into the main worktree; not fatal)" >&2
+  fi
+  if (( failures > 0 )); then
+    echo "wt: warning: ${failures} path(s) could not be linked from $root" >&2
+    return 1
+  fi
+  return 0
 }

@@ -14,6 +14,8 @@ A shell function for creating and managing git worktrees with minimal friction. 
 
 Files are **hard-linked** (same inode), so edits in any worktree are visible everywhere. This is intentional — these are shared config files. Directories in the glob list get **symlinked** (macOS can't hard-link directories).
 
+A hard link is also refused when the caller cannot write through the *source* directory — a sandboxed setup hook (Codex `workspace-write`, an agent seatbelt) or a TCC-restricted process gets `EPERM` from `ln` while `ln -s` still works. Both `wt create` and `wt-link-ignored` therefore fall back to a **symlink** and say so on stderr; the file is still shared with the main worktree. They report a non-zero status only when a path could not be linked at all, because a setup hook that reports success with missing `.env`/`CLAUDE.local.md` is worse than a loud failure.
+
 Linking uses `find ... -prune` rather than a zsh `**/` glob. This matters on large
 repos: the glob version took **~54 seconds** in `devops-monorepo` (6.8 GB, 38k
 directories), all of it *after* `wt create` had printed its git output and `cd`'d
@@ -65,7 +67,7 @@ Configuration is via environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `WT_WORKTREES_DIR` | Base directory for all worktrees | Must be set (via `wt install`) |
-| `WT_LINK_IGNORED` | Space-separated globs to hard-link from main worktree | `CLAUDE.md CLAUDE.local.md .claude .env* .zed` |
+| `WT_LINK_IGNORED` | Space-separated globs to hard-link (or symlink) from main worktree | `CLAUDE.md CLAUDE.local.md .claude .env* .zed` |
 
 ```bash
 # Source it (add to .zshrc)

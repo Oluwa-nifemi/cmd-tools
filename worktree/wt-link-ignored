@@ -6,6 +6,13 @@
 # without taking over branch/worktree lifecycle. This helper keeps only the
 # useful post-create part: bring local config over from the main worktree using
 # the same WT_LINK_IGNORED environment variable as `wt`.
+#
+# Files are hard-linked where possible and symlinked when the hard link is
+# refused. link(2) needs the caller to be able to write through the source's
+# directory, so a sandboxed caller (Codex workspace-write, an agent seatbelt)
+# or a TCC-restricted one gets EPERM from `ln` while symlink(2) — which only
+# writes inside the worktree — still works. Both share the file with the main
+# worktree, so the fallback keeps the behaviour this script exists for.
 
 set -uo pipefail
 
@@ -32,6 +39,13 @@ fi
 cd "$current_worktree"
 
 typeset -A linked_paths
+typeset -i failures=0
+# Not an error: a caller that cannot hard-link still gets the file, just as a
+# symlink. Report the count so a degraded run is visible without being fatal.
+typeset -i symlink_fallbacks=0
+symlink_note() {
+  echo "wt-link-ignored: linked as symlink (hard link refused): $1" >&2
+}
 
 # Match the useful `wt create` behavior for Codex-managed worktrees: bring over
 # the shared ignored/local paths after Codex has created the worktree. Unlike
@@ -81,22 +95,37 @@ for pattern in ${=WT_LINK_IGNORED}; do
 
       if ! rm -rf "$target_path"; then
         warn "could not replace existing path: $relative_path"
+        failures+=1
         continue
       fi
     fi
 
     if ! mkdir -p "$(dirname "$target_path")"; then
       warn "could not create parent directory for: $relative_path"
+      failures+=1
       continue
     fi
 
     if [[ -d "$match" || "$relative_path" == "AGENTS.md" ]]; then
-      ln -s "$match" "$target_path" || warn "could not symlink: $relative_path"
+      ln -s "$match" "$target_path" || {
+        warn "could not symlink: $relative_path"
+        failures+=1
+      }
+    elif ln "$match" "$target_path" 2>/dev/null; then
+      : # hard link: same inode, so the worktree sees a real file
+    elif ln -s "$match" "$target_path"; then
+      symlink_fallbacks+=1
+      symlink_note "$relative_path"
     else
-      ln "$match" "$target_path" || warn "could not hard-link: $relative_path"
+      warn "could not link: $relative_path"
+      failures+=1
     fi
   done
 done
+
+if (( symlink_fallbacks > 0 )); then
+  echo "wt-link-ignored: ${symlink_fallbacks} path(s) symlinked instead of hard-linked (caller cannot link into the main worktree; not fatal)" >&2
+fi
 
 # Keep this invocation contract in sync with `_wt_run_post_create_hook` in
 # worktree/wt. Codex owns worktree creation, so this script is its equivalent
@@ -113,6 +142,14 @@ if [[ -n "${WT_POST_CREATE_HOOK:-}" ]]; then
       "$WT_POST_CREATE_HOOK" "$current_worktree" ||
         warn "post-create hook failed: $WT_POST_CREATE_HOOK"
   fi
+fi
+
+# Succeed only when every intended path actually landed. A hard-link refusal is
+# recovered as a symlink and stays non-fatal, but a path that could not be
+# linked at all must not be reported to Codex/T3 as a clean setup.
+if (( failures > 0 )); then
+  warn "${failures} path(s) could not be linked"
+  exit 1
 fi
 
 exit 0
