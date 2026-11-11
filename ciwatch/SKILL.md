@@ -44,3 +44,9 @@ cw 12345                     # legacy: watch by run id (repo inferred from cwd)
 - `gh` (authenticated)
 - `jq`
 - `terminal-notifier` (macOS)
+
+`gh` authenticates with its own `gh auth login` credential by default. Set
+`CI_WATCH_GH_TOKEN` only when you want a narrower CI-scoped token in place of it;
+if GitHub rejects that token, cw warns and falls back to the `gh auth login`
+credential rather than failing. Repo inference never needs the token: it reads the
+`origin` remote locally, so a stale token can't masquerade as a cwd problem.

@@ -11,9 +11,12 @@
 #
 # Configuration:
 #   CI_WATCH_GH_TOKEN
-#                     GitHub token used only by cw. This is passed to the
-#                     GitHub CLI as GH_TOKEN, which takes precedence over a
-#                     global GITHUB_TOKEN.
+#                     GitHub token used only by cw. When it is set *and GitHub
+#                     accepts it*, it is passed to the GitHub CLI as GH_TOKEN,
+#                     which takes precedence over a global GITHUB_TOKEN.
+#                     If GitHub rejects it, cw warns and falls back to the
+#                     regular `gh auth login` credential instead of failing.
+#                     Refresh or unset the variable once the token goes stale.
 #   CW_REPO_ALIASES   Space-separated "alias:owner/repo" pairs. Example:
 #                       export CW_REPO_ALIASES="api:myorg/api front:myorg/web"
 #                     Used to expand the optional first argument.
@@ -39,11 +42,44 @@
 
 set -uo pipefail
 
-# Keep a limited CI token scoped to cw instead of exporting GITHUB_TOKEN, which
-# would also change authentication for every other GitHub CLI command.
-if [[ -n "${CI_WATCH_GH_TOKEN:-}" ]]; then
-  export GH_TOKEN="$CI_WATCH_GH_TOKEN"
-fi
+# Resolve the credential gh should use.
+#
+# The point of CI_WATCH_GH_TOKEN is to keep a limited CI token scoped to cw
+# rather than exporting GITHUB_TOKEN, which would re-authenticate every other
+# `gh` command. But GH_TOKEN outranks the `gh auth login` credential for the
+# whole process, so an unconditional export means a revoked PAT doesn't just
+# fail on its own call — it shuts the door on a login that works fine. That is
+# how a stale token surfaced as "Cannot infer repo from cwd" rather than as the
+# auth error it was.
+#
+# So the scoped token is now a candidate: one cheap call confirms GitHub accepts
+# it, and on rejection we leave GH_TOKEN unset and let gh use its own keyring
+# login. The warning is deliberate — a run that quietly succeeds under the
+# personal login is not what someone who configured a CI token believes is
+# happening.
+#
+# That check costs one API round trip, so it is only called from the paths that
+# talk to GitHub (never --status / --help / --clear-status), and the result is
+# memoized in CW_GH_TOKEN_RESOLVED so the detached child spawned with nohup
+# below doesn't repeat it.
+select_gh_token() {
+  [ -z "${CW_GH_TOKEN_RESOLVED:-}" ] || return 0
+  local scoped="${CI_WATCH_GH_TOKEN:-}"
+  if [ -z "$scoped" ]; then
+    # Nothing scoped configured: gh authenticates however the user logged in.
+    export CW_GH_TOKEN_RESOLVED=gh-login
+    return 0
+  fi
+  if GH_TOKEN="$scoped" gh api user --jq .login >/dev/null 2>&1; then
+    export GH_TOKEN="$scoped"
+    export CW_GH_TOKEN_RESOLVED=scoped
+    return 0
+  fi
+  echo "warning: CI_WATCH_GH_TOKEN was rejected by GitHub; using the gh CLI login instead." >&2
+  echo "         Refresh or unset that variable to silence this." >&2
+  export CW_GH_TOKEN_RESOLVED=gh-login
+  return 0
+}
 
 usage() {
   cat <<'EOF'
@@ -73,6 +109,9 @@ Configure aliases via CW_REPO_ALIASES, e.g.:
 
 Configure a GitHub token used only by cw, e.g.:
   export CI_WATCH_GH_TOKEN="github_pat_..."
+
+Unset (or refresh) that variable and cw falls back to the `gh auth login`
+credential. A token GitHub rejects triggers the same fallback, with a warning.
 
 Configure per-workflow default delays via CW_DEFAULT_DELAYS (";"-separated
 "pattern:duration" pairs — a pattern may contain spaces), e.g.:
@@ -350,6 +389,10 @@ main() {
     clear_status
     return 0
   fi
+
+  # Everything past this point talks to GitHub, so resolve the credential first.
+  # The bookkeeping subcommands above are local-only and stay free of the call.
+  select_gh_token
 
   # "list" subcommand: cw list [<repo>] [<query>]
   # Repo detection mirrors the main workflow path: alias key or owner/repo prefix.
