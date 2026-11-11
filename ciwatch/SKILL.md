@@ -10,7 +10,7 @@ A standalone bash script that wraps `gh run watch` with workflow-name resolution
 
 ## How it works
 
-1. Resolves the repo: from a `CW_REPO_ALIASES` entry, an explicit `owner/repo`, or `gh repo view` in the current git directory.
+1. Resolves the repo: from a `CW_REPO_ALIASES` entry, an explicit `owner/repo`, or the `origin` remote of the current git directory (`git remote get-url`, no network). Only when there is no `origin` does it fall back to `gh repo view`.
 2. Resolves the workflow: case-insensitive substring match against `gh workflow list`. If multiple match, prints them and exits non-zero.
 3. Resolves the branch: `-b <branch>` flag, or current git branch.
 4. Fetches the latest run for that workflow + branch via `gh run list`.

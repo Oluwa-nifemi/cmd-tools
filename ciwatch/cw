@@ -92,8 +92,37 @@ resolve_alias() {
   return 1
 }
 
+# Infer owner/repo from the checkout in cwd.
+#
+# Reads the git remote rather than asking `gh repo view`. Two reasons:
+#   1. `gh repo view` goes over the network and needs a valid token. cw exports
+#      CI_WATCH_GH_TOKEN as GH_TOKEN (above), which overrides the user's normal
+#      `gh auth login` credential for the whole process. When that PAT expired,
+#      repo detection failed before any real work started and reported
+#      "Cannot infer repo from cwd" — a message that points at the directory when
+#      the actual fault is credentials. `git remote get-url` needs no token and no
+#      network, so detection works regardless; if the token really is bad, the
+#      error now comes from the `gh workflow list` call that actually needs it.
+#   2. It's one local exec instead of an API round trip on every invocation.
+#
+# Handles the three remote URL shapes git will hand back, for a repo like
+# ardoq/devops-monorepo:
+#   https://github.com/ardoq/devops-monorepo.git   → strip "scheme://host/"
+#   git@github.com:ardoq/devops-monorepo.git       → strip "user@host:"  (scp form)
+#   ssh://git@github.com/ardoq/devops-monorepo     → strip "scheme://host/"
+# plus a trailing ".git" and trailing slash. GitHub Enterprise hostnames and an
+# https remote embedded with a token (https://x:tok@host/o/r) fall out of the
+# same two rules, since they match "scheme://<anything-not-a-slash>/" too.
 repo_from_cwd() {
-  gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+  local url
+  url=$(git remote get-url origin 2>/dev/null) || url=""
+  if [ -z "$url" ]; then
+    # No `origin` (or not a git repo at all). Fall back to the old API lookup so
+    # a clone whose main remote is named something else still resolves.
+    gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+    return
+  fi
+  echo "$url" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*/##; s#^[^@/]+@[^:/]+:##; s#\.git$##; s#/+$##'
 }
 
 # Look up a default delay duration for a resolved workflow name from
