@@ -17,4 +17,4 @@ The Terminal-owned run waits up to 20 minutes for active Personal turns to finis
 
 Progress and backups are under `opencodex/local/t3code-personal/backups/git-sync-<UTC timestamp>/`. Keep that Terminal tab open while the foreground launcher is running.
 
-The old manual syncs left `main` with uncommitted copied source. That needs a one-time cleanup before this Git-only command can run. It deliberately refuses to guess which local edits are disposable.
+Keep Personal’s `main` clean and do implementation work in Draft. The command deliberately refuses to guess which local edits are disposable.
