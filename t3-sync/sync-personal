@@ -47,13 +47,13 @@ BACKUP="$LOCAL/backups/git-sync-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP"; chmod 700 "$BACKUP"
 exec > >(tee -a "$BACKUP/sync.log") 2>&1
 # Read-only SQLite backup captures WAL-backed chat data without copying files from a
-# running database. The active statuses are T3's durable run/provider-turn states.
+# running database. Active runs count; a provider-turn row left running after its latest run ended is stale.
 python3 - "$LOCAL/profile/userdata/statev2.sqlite" "$BACKUP/statev2.sqlite" <<'PY'
 import sqlite3,sys,time
 source,dest=sys.argv[1:];deadline=time.monotonic()+1200;quiet=0
 while time.monotonic()<deadline:
     with sqlite3.connect('file:'+source+'?mode=ro',uri=True) as db:
-        busy=sum(db.execute("SELECT count(*) FROM "+table+" WHERE status IN ('running','starting','preparing','queued','waiting')").fetchone()[0] for table in ('orchestration_v2_projection_runs','orchestration_v2_projection_provider_turns'))
+        busy=db.execute("SELECT (SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing','queued','waiting')) + (SELECT count(*) FROM orchestration_v2_projection_provider_turns t WHERE t.status IN ('running','starting','preparing','queued','waiting') AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status IN ('failed','cancelled','interrupted','completed') AND r.ordinal=(SELECT max(ordinal) FROM orchestration_v2_projection_runs WHERE thread_id=t.thread_id)))").fetchone()[0]
         quiet=0 if busy else quiet+1
         if quiet>=4:
             out=sqlite3.connect(dest);db.backup(out);out.close();break
