@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Promote committed Draft work. Main is a release checkout, never a second staging area.
+set -euo pipefail
+ROOT="${T3_SYNC_ROOT:-/Users/nifemi/Documents/work/t3code}"
+LOCAL="${T3_SYNC_LOCAL:-/Users/nifemi/Documents/work/opencodex/local/t3code-personal}"
+REF="${T3_SYNC_REF:-personal-draft}"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+preflight() {
+  [[ "$(git -C "$ROOT" branch --show-current)" == main ]] || { echo 'Run against the Personal main checkout.' >&2; return 1; }
+  git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet || {
+    echo 'Personal main has uncommitted changes. Resolve those first; this command never stashes or copies them.' >&2
+    return 1
+  }
+  TARGET="$(git -C "$ROOT" rev-parse --verify "$REF^{commit}")"
+  echo "Personal: $(git -C "$ROOT" rev-parse --short HEAD)  Draft: ${TARGET:0:8}"
+  git -C "$ROOT" merge-base --is-ancestor HEAD "$TARGET" || {
+    echo 'Branches diverged. Merge main into Draft and test/commit there first; sync never rewrites history.' >&2
+    return 1
+  }
+  git -C "$ROOT" log --oneline HEAD.."$TARGET"
+}
+
+# A T3-hosted agent must finish its turn before Personal can quit. Terminal owns the
+# actual run, so stopping Personal cannot terminate the merge/build/launch command.
+case "${1:-}" in
+  --help|-h) echo 'Usage: t3d-sync [--dry-run]  (committed Draft → main, build, restart)'; exit 0 ;;
+  ''|--dry-run|--run) ;;
+  *) echo 'Unknown option. Use --help.' >&2; exit 2 ;;
+esac
+if [[ "${1:-}" != --run ]]; then
+  preflight
+  [[ "${1:-}" != --dry-run ]] || exit 0
+  export T3_SYNC_ROOT="$ROOT" T3_SYNC_LOCAL="$LOCAL" T3_SYNC_REF="$TARGET"
+  /opt/homebrew/bin/python3 - "$SELF" "$ROOT" "$LOCAL" "$TARGET" <<'PY'
+import json,shlex,subprocess,sys
+script,root,local,target=sys.argv[1:]
+cmd=' '.join(shlex.quote(x) for x in ['env','T3_SYNC_ROOT='+root,'T3_SYNC_LOCAL='+local,'T3_SYNC_REF='+target,script,'--run'])
+subprocess.run(['osascript','-e','tell application "Terminal" to do script '+json.dumps(cmd)],check=True)
+PY
+  echo 'Queued in Terminal. Only the pinned Draft commit will be merged; Draft working edits are ignored.'
+  exit 0
+fi
+
+preflight
+BACKUP="$LOCAL/backups/git-sync-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$BACKUP"; chmod 700 "$BACKUP"
+exec > >(tee -a "$BACKUP/sync.log") 2>&1
+# Read-only SQLite backup captures WAL-backed chat data without copying files from a
+# running database. The active statuses are T3's durable run/provider-turn states.
+python3 - "$LOCAL/profile/userdata/statev2.sqlite" "$BACKUP/statev2.sqlite" <<'PY'
+import sqlite3,sys,time
+source,dest=sys.argv[1:];deadline=time.monotonic()+1200;quiet=0
+while time.monotonic()<deadline:
+    with sqlite3.connect('file:'+source+'?mode=ro',uri=True) as db:
+        busy=sum(db.execute("SELECT count(*) FROM "+table+" WHERE status IN ('running','starting','preparing','queued','waiting')").fetchone()[0] for table in ('orchestration_v2_projection_runs','orchestration_v2_projection_provider_turns'))
+        quiet=0 if busy else quiet+1
+        if quiet>=4:
+            out=sqlite3.connect(dest);db.backup(out);out.close();break
+    time.sleep(1)
+else:raise SystemExit('Active turns did not finish within 20 minutes. Personal was not stopped.')
+PY
+preflight                         # Do not merge a changed/dirty checkout after waiting.
+git -C "$ROOT" rev-parse HEAD > "$BACKUP/main-before.txt"
+# Main is the tested release line. Any conflict resolution belongs in Draft.
+# Fast-forward only means the built tree is exactly the commit that was demoed.
+git -C "$ROOT" merge --ff-only "$TARGET"
+BACKEND=$(/usr/sbin/lsof -tiTCP:3773 -sTCP:LISTEN || true)
+if [[ -n "$BACKEND" ]]; then
+  [[ "$BACKEND" =~ ^[0-9]+$ ]] || { echo 'Unexpected Personal port ownership.' >&2; exit 1; }
+  /usr/sbin/lsof -a -p "$BACKEND" -d cwd -Fn | grep -Fx "n$ROOT" >/dev/null || { echo 'Port 3773 is not this checkout.' >&2; exit 1; }
+  APP_PID=$(ps -p "$BACKEND" -o ppid= | tr -d ' ')
+  APP_COMMAND=$(ps -p "$APP_PID" -o command=)
+  [[ "$APP_COMMAND" == *"$ROOT/apps/desktop/.electron-runtime/T3 Code (Personal).app/Contents/MacOS/Electron"* ]] || { echo 'Backend parent is not Personal.' >&2; exit 1; }
+  osascript -e 'tell application id "com.nifemi.t3code.personal" to quit'
+  for ((i=0;i<120;i++)); do
+    if ! kill -0 "$APP_PID" 2>/dev/null && ! /usr/sbin/lsof -tiTCP:3773 -sTCP:LISTEN >/dev/null; then break; fi
+    sleep .5
+  done
+  ! kill -0 "$APP_PID" 2>/dev/null && ! /usr/sbin/lsof -tiTCP:3773 -sTCP:LISTEN >/dev/null || { echo 'Personal did not stop. No build started.' >&2; exit 1; }
+fi
+for path in apps/desktop/dist-electron apps/server/dist apps/web/dist; do
+  [[ ! -L "$ROOT/$path" ]] || { echo "Refusing symlinked build directory: $path" >&2; exit 1; }
+  mkdir -p "$BACKUP/$(dirname "$path")"; cp -R "$ROOT/$path" "$BACKUP/$path"
+done
+cd "$ROOT"
+# Build only after shutdown. On build failure restore binaries, never the profile.
+if ! /opt/homebrew/bin/rtk proxy node_modules/.bin/vp run build:desktop; then
+  for path in apps/desktop/dist-electron apps/server/dist apps/web/dist; do
+    rm -rf "$ROOT/$path"; cp -R "$BACKUP/$path" "$ROOT/$path"
+  done
+  echo 'Build failed; previous binaries restored. Main stays merged. See sync.log.'
+fi
+unset ELECTRON_RUN_AS_NODE VITE_DEV_SERVER_URL
+export T3CODE_PORT=3773
+exec /opt/homebrew/bin/rtk proxy node "$LOCAL/launch-personal.mjs"
