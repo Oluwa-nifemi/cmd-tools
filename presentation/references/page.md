@@ -24,8 +24,6 @@ weeks later.
 - Do not use stat grids or large display numbers. State the key number in a
   sentence, in bold if needed.
 - Keep prose to about 500 words, bullets included.
-- End with a compact Reference strip. It holds only links, paths and commands
-  that the steps do not show.
 
 ## Element rules
 
