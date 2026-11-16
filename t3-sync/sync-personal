@@ -74,7 +74,6 @@ while time.monotonic()<deadline:
         # A live app can refuse the read-only open for a moment, mid-checkpoint or
         # mid-restart. Report it so a silent stall is visible, then retry.
         print('  database read failed: %s'%error,flush=True);quiet=0
-    if db is not None: db.close()
     if blockers is not None:
         quiet=0 if blockers else quiet+1
         if quiet>=4:
@@ -85,6 +84,7 @@ while time.monotonic()<deadline:
         if signature and (signature!=last or elapsed//30!=slot):
             last=signature;slot=elapsed//30
             print('  %ds waiting on %s'%(elapsed,'  '.join('%s %s:%s'%(k,t[:8],s) for k,t,s in signature)),flush=True)
+    if db is not None: db.close()
     time.sleep(1)
 else:raise SystemExit('Personal database did not become quiet within 60 minutes. Personal was not stopped.')
 PY
