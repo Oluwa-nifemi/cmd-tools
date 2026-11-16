@@ -50,15 +50,39 @@ exec > >(tee -a "$BACKUP/sync.log") 2>&1
 # running database. Active runs count; a provider-turn row left running after its latest run ended is stale.
 python3 - "$LOCAL/profile/userdata/statev2.sqlite" "$BACKUP/statev2.sqlite" <<'PY'
 import sqlite3,sys,time
-source,dest=sys.argv[1:];deadline=time.monotonic()+1200;quiet=0
+ACTIVE=('running','starting','preparing','queued','waiting')
+DONE=('completed','failed','cancelled','interrupted','rolled_back')
+marks=lambda items:','.join('?'*len(items))
+BLOCKERS=("SELECT 'run',thread_id,status FROM orchestration_v2_projection_runs WHERE status IN ("+marks(ACTIVE)+")"
+ " UNION ALL "
+ "SELECT 'turn',t.thread_id,t.status FROM orchestration_v2_projection_provider_turns t WHERE t.status IN ("+marks(ACTIVE)+")"
+ " AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id"
+ " AND r.status IN ("+marks(DONE)+")"
+ " AND r.ordinal=(SELECT max(ordinal) FROM orchestration_v2_projection_runs WHERE thread_id=t.thread_id))")
+PARAMS=ACTIVE+ACTIVE+DONE
+source,dest=sys.argv[1:];deadline=time.monotonic()+3600;quiet=0;started=time.monotonic()
+last=None;slot=0
 while time.monotonic()<deadline:
-    with sqlite3.connect('file:'+source+'?mode=ro',uri=True) as db:
-        busy=db.execute("SELECT (SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN ('running','starting','preparing','queued','waiting')) + (SELECT count(*) FROM orchestration_v2_projection_provider_turns t WHERE t.status IN ('running','starting','preparing','queued','waiting') AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status IN ('failed','cancelled','interrupted','completed') AND r.ordinal=(SELECT max(ordinal) FROM orchestration_v2_projection_runs WHERE thread_id=t.thread_id)))").fetchone()[0]
-        quiet=0 if busy else quiet+1
+    blockers=None
+    try:
+        with sqlite3.connect('file:'+source+'?mode=ro',uri=True) as db:
+            blockers=db.execute(BLOCKERS,PARAMS).fetchall()
+    except sqlite3.Error as error:
+        # A live app can refuse the read-only open for a moment, mid-checkpoint or
+        # mid-restart. Report it so a silent stall is visible, then retry.
+        print('  database read failed: %s'%error,flush=True);quiet=0
+    if blockers is not None:
+        quiet=0 if blockers else quiet+1
         if quiet>=4:
-            out=sqlite3.connect(dest);db.backup(out);out.close();break
+            out=sqlite3.connect(dest);db.backup(out);out.close()
+            print('  %ds: database quiet, backing up.'%int(time.monotonic()-started),flush=True);break
+        signature=tuple(sorted(set(blockers)))
+        elapsed=int(time.monotonic()-started)
+        if signature and (signature!=last or elapsed//30!=slot):
+            last=signature;slot=elapsed//30
+            print('  %ds waiting on %s'%(elapsed,'  '.join('%s %s:%s'%(k,t[:8],s) for k,t,s in signature)),flush=True)
     time.sleep(1)
-else:raise SystemExit('Active turns did not finish within 20 minutes. Personal was not stopped.')
+else:raise SystemExit('Personal database did not become quiet within 60 minutes. Personal was not stopped.')
 PY
 preflight                         # Do not merge a changed/dirty checkout after waiting.
 git -C "$ROOT" rev-parse HEAD > "$BACKUP/main-before.txt"
