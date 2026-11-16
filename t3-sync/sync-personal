@@ -33,10 +33,22 @@ if [[ "${1:-}" != --run ]]; then
   [[ "${1:-}" != --dry-run ]] || exit 0
   export T3_SYNC_ROOT="$ROOT" T3_SYNC_LOCAL="$LOCAL" T3_SYNC_REF="$TARGET"
   /opt/homebrew/bin/python3 - "$SELF" "$ROOT" "$LOCAL" "$TARGET" <<'PY'
-import json,shlex,subprocess,sys
+import json,os,shlex,subprocess,sys,tempfile
 script,root,local,target=sys.argv[1:]
-cmd=' '.join(shlex.quote(x) for x in ['env','T3_SYNC_ROOT='+root,'T3_SYNC_LOCAL='+local,'T3_SYNC_REF='+target,script,'--run'])
-subprocess.run(['osascript','-e','tell application "Terminal" to do script '+json.dumps(cmd)],check=True)
+url=os.environ.get('T3_MCP_URL');token=os.environ.get('T3_MCP_BEARER_TOKEN')
+if not url or not token:
+    raise SystemExit('Run sync from a Personal agent with T3 MCP access. No database polling fallback is allowed.')
+# Terminal does not inherit the agent environment. Hand off credentials privately,
+# never as command arguments or Terminal scrollback; the child removes the file.
+fd,config=tempfile.mkstemp(prefix='t3-sync-mcp-',suffix='.json')
+with os.fdopen(fd,'w') as stream:
+    json.dump({'url':url,'token':token},stream)
+cmd=' '.join(shlex.quote(x) for x in ['env','T3_SYNC_ROOT='+root,'T3_SYNC_LOCAL='+local,'T3_SYNC_REF='+target,'T3_SYNC_MCP_CONFIG='+config,script,'--run'])
+try:
+    subprocess.run(['osascript','-e','tell application "Terminal" to do script '+json.dumps(cmd)],check=True)
+except BaseException:
+    os.unlink(config)
+    raise
 PY
   echo 'Queued in Terminal. Only the pinned Draft commit will be merged; Draft working edits are ignored.'
   exit 0
@@ -46,48 +58,10 @@ preflight
 BACKUP="$LOCAL/backups/git-sync-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP"; chmod 700 "$BACKUP"
 exec > >(tee -a "$BACKUP/sync.log") 2>&1
-# Read-only SQLite backup captures WAL-backed chat data without copying files from a
-# running database. Active runs count; a provider-turn row left running after its latest run ended is stale.
-python3 - "$LOCAL/profile/userdata/statev2.sqlite" "$BACKUP/statev2.sqlite" <<'PY'
-import sqlite3,sys,time
-ACTIVE=('running','starting','preparing','queued','waiting')
-DONE=('completed','failed','cancelled','interrupted','rolled_back')
-marks=lambda items:','.join('?'*len(items))
-BLOCKERS=("SELECT 'run',thread_id,status FROM orchestration_v2_projection_runs WHERE status IN ("+marks(ACTIVE)+")"
- " UNION ALL "
- "SELECT 'turn',t.thread_id,t.status FROM orchestration_v2_projection_provider_turns t WHERE t.status IN ("+marks(ACTIVE)+")"
- " AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id"
- " AND r.status IN ("+marks(DONE)+")"
- " AND r.ordinal=(SELECT max(ordinal) FROM orchestration_v2_projection_runs WHERE thread_id=t.thread_id))")
-PARAMS=ACTIVE+ACTIVE+DONE
-source,dest=sys.argv[1:];deadline=time.monotonic()+3600;quiet=0;started=time.monotonic()
-last=None;slot=0
-while time.monotonic()<deadline:
-    blockers=None;db=None
-    try:
-        # The sqlite3 context manager commits but never closes. Leaking one
-        # connection per poll exhausts the process fd limit, and every later open
-        # then fails with "unable to open database file".
-        db=sqlite3.connect('file:'+source+'?mode=ro',uri=True)
-        blockers=db.execute(BLOCKERS,PARAMS).fetchall()
-    except sqlite3.Error as error:
-        # A live app can refuse the read-only open for a moment, mid-checkpoint or
-        # mid-restart. Report it so a silent stall is visible, then retry.
-        print('  database read failed: %s'%error,flush=True);quiet=0
-    if blockers is not None:
-        quiet=0 if blockers else quiet+1
-        if quiet>=4:
-            out=sqlite3.connect(dest);db.backup(out);out.close()
-            print('  %ds: database quiet, backing up.'%int(time.monotonic()-started),flush=True);break
-        signature=tuple(sorted(set(blockers)))
-        elapsed=int(time.monotonic()-started)
-        if signature and (signature!=last or elapsed//30!=slot):
-            last=signature;slot=elapsed//30
-            print('  %ds waiting on %s'%(elapsed,'  '.join('%s %s:%s'%(k,t[:8],s) for k,t,s in signature)),flush=True)
-    if db is not None: db.close()
-    time.sleep(1)
-else:raise SystemExit('Personal database did not become quiet within 60 minutes. Personal was not stopped.')
-PY
+[[ -f "${T3_SYNC_MCP_CONFIG:-}" ]] || { echo 'Missing private T3 MCP connection file.' >&2; exit 1; }
+trap 'rm -f "$T3_SYNC_MCP_CONFIG"' EXIT
+python3 "$(dirname "$SELF")/wait-idle.py" "$T3_SYNC_MCP_CONFIG"
+rm -f "$T3_SYNC_MCP_CONFIG"
 preflight                         # Do not merge a changed/dirty checkout after waiting.
 git -C "$ROOT" rev-parse HEAD > "$BACKUP/main-before.txt"
 # Main is the tested release line. Any conflict resolution belongs in Draft.
@@ -107,6 +81,15 @@ if [[ -n "$BACKEND" ]]; then
   done
   ! kill -0 "$APP_PID" 2>/dev/null && ! /usr/sbin/lsof -tiTCP:3773 -sTCP:LISTEN >/dev/null || { echo 'Personal did not stop. No build started.' >&2; exit 1; }
 fi
+# Personal is stopped, so this copy cannot race with new chat writes.
+python3 - "$LOCAL/profile/userdata/statev2.sqlite" "$BACKUP/statev2.sqlite" <<'PYBACKUP'
+from contextlib import closing
+import sqlite3,sys
+with closing(sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)) as source:
+    with closing(sqlite3.connect(sys.argv[2])) as destination:
+        source.backup(destination)
+print('Database backup complete.',flush=True)
+PYBACKUP
 for path in apps/desktop/dist-electron apps/server/dist apps/web/dist; do
   [[ ! -L "$ROOT/$path" ]] || { echo "Refusing symlinked build directory: $path" >&2; exit 1; }
   mkdir -p "$BACKUP/$(dirname "$path")"; cp -R "$ROOT/$path" "$BACKUP/$path"

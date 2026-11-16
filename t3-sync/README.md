@@ -13,7 +13,13 @@ The command pins `personal-draft` to its current commit and uses **`git merge --
 
 `main` must have no tracked/index changes. If branches diverge, merge `main` into Draft and test/commit there before syncing. Keep implementation work in Draft; `main` is the release checkout.
 
-The Terminal-owned run waits up to 20 minutes for active Personal turns to finish, backs up its database through a read-only SQLite connection, merges the pinned commit, stops the verified Personal app, saves its current build, rebuilds and relaunches using the existing Personal profile. Build failure restores the previous binaries and relaunches them. The Git branch stays advanced; profiles are never copied or restored over.
+The Terminal-owned run waits up to one hour for T3 to report no active threads across all projects, including child agents. It calls `t3_project_list` and `t3_thread_list` over MCP; it never queries database tables for activity. After four idle checks it merges the pinned commit, stops the verified Personal app, backs up its database and current build, rebuilds and relaunches using the existing Personal profile. Build failure restores the previous binaries and relaunches them. The Git branch stays advanced; profiles are never copied or restored over.
+
+## Running it from an agent
+
+Run the command from a Personal agent with `T3_MCP_URL` and `T3_MCP_BEARER_TOKEN` available. The command hands those credentials to Terminal through a private temporary file, removed after the idle check. Missing access or failed API calls never count as idle.
+
+Fire the command and end the turn. A Personal-hosted agent's own active turn blocks the sync. Report that it is queued, and check the result from a later message. The wait logs blocking thread names and statuses on change and every 30 seconds. Status polling does not prevent a new turn from starting just before shutdown; an atomic drain would require server support.
 
 Progress and backups are under `opencodex/local/t3code-personal/backups/git-sync-<UTC timestamp>/`. The sync uses a temporary Terminal for the build. Once Personal has launched, closing that tab does not stop it: the GUI app has its own process session.
 
