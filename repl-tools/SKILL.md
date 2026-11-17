@@ -30,6 +30,21 @@ repls                          # list live REPLs
 - `watchrepl` / `seerepl` run `tail -f` and never exit. Use `watchrepl --no-follow [N]` (last 80 log lines, exits).
 - `gotorepl` opens an interactive subshell. Use `gotorepl --print [N]` to get the path.
 
+## Avoid client-side parenthesis repair hangs
+
+`runrepl` sends code through `clj-nrepl-eval` from `clojure-mcp-light`.
+That client automatically repairs delimiters before connecting to the REPL.
+Malformed code, including an extra closing parenthesis, can hang this repair
+step. The client's socket timeout does not cover it.
+
+Check that parentheses, brackets and braces are balanced before submitting
+code. Prefer small expressions; do not rely on automatic repair.
+
+If a call hangs, check the submitted code before treating the REPL as dead.
+For this repair failure, stop only the stuck client process, correct the code,
+and retry. Do not restart the REPL or use `--fresh` for a client-side repair
+hang; the REPL has not received the expression.
+
 ## Running tests
 
 `runtests ardoq.foo-test ardoq.foo` reloads the source ns, then the test ns,
